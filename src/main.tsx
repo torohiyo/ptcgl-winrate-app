@@ -28,7 +28,7 @@ type MatchRecord = {
   note: string;
 };
 
-const STORAGE_KEY = 'ptcgl-winrate-tracker-v4-mobile-manual';
+const STORAGE_KEY = 'ptcgl-winrate-tracker-v5-mobile-compact';
 const DEFAULT_PLAYER_NAME = 'toropoke0421';
 const DEFAULT_CREATED_AT = '2026-04-29T00:00:00.000Z';
 const IMAGE_BASE_URL = 'https://r2.limitlesstcg.net/pokemon/gen9';
@@ -36,25 +36,25 @@ const IMAGE_BASE_URL = 'https://r2.limitlesstcg.net/pokemon/gen9';
 const defaultDeckData = [
   ['dragapult', 'Dragapult ex'],
   ['crustle', 'Crustle'],
-  ['mewtwospidops', "Rocket's Mewtwo ex"],
-  ['ogerponmeganium', 'Ogerpon Meganium'],
-  ['dipplinthwackey', 'Festival Lead'],
+  ['mewtwo', "Rocket's Mewtwo ex"],
+  ['ogerpon', 'Ogerpon Meganium'],
+  ['dipplin', 'Festival Lead'],
   ['garchomp', "Cynthia's Garchomp ex"],
   ['raging-bolt', 'Raging Bolt ex'],
   ['zoroark', "N's Zoroark ex"],
   ['lucario-mega', 'Mega Lucario ex'],
   ['alakazam', 'Alakazam'],
-  ['ogerponogerpon-wellspring', 'Ogerpon Box'],
+  ['ogerpon-box', 'Ogerpon Box', 'ogerpon'],
   ['starmie-mega', 'Mega Starmie ex'],
   ['okidogi', 'Okidogi'],
-  ['noctowlogerpon-wellspring', 'Tera Box'],
-  ['honchkrowporygon2', "Rocket's Honchkrow"],
+  ['noctowl', 'Tera Box'],
+  ['honchkrow', "Rocket's Honchkrow"],
   ['grimmsnarl', "Marnie's Grimmsnarl ex"],
   ['clefairy', "Lillie's Clefairy ex"],
   ['slowking', 'Slowking'],
   ['lopunny-mega', 'Mega Lopunny ex'],
   ['trevenant', "Hop's Trevenant"],
-  ['absol-megakangaskhan-mega', 'Mega Absol Box'],
+  ['absol-mega', 'Mega Absol Box'],
   ['archaludon', 'Archaludon ex'],
   ['typhlosion', "Ethan's Typhlosion"],
   ['flareon', 'Flareon ex'],
@@ -62,9 +62,9 @@ const defaultDeckData = [
   ['hydrapple', 'Hydrapple ex'],
 ] as const;
 
-const defaultDecks: Deck[] = defaultDeckData.map(([imageId, name], index) => ({
-  id: imageId,
-  imageId,
+const defaultDecks: Deck[] = defaultDeckData.map(([id, name, imageOverride], index) => ({
+  id,
+  imageId: imageOverride || id,
   name,
   memo: '',
   isMyDeck: index === 0,
