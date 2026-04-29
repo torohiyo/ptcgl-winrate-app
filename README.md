@@ -1,22 +1,24 @@
 # PTCGL Winrate Tracker
 
-PTCGL の対戦結果を手動登録し、デッキ別・相性表・型別勝率を確認するローカル Web アプリです。
+Mobile-first winrate tracker for Pokémon TCG Live.
 
-## 起動
+## Local development
 
 ```bash
 npm install
 npm run dev
 ```
 
-## v9 の主な機能
+## Build
 
-- 試合結果登録ページで、自分・相手それぞれのデッキと型を選択
-- Dragapult ex には初期状態で「廃墟型」「ボム型」を登録
-- バトルログから勝敗と先攻後攻を判定
-- 相性表の勝率セルをクリックして、型別勝率ページへ遷移
-- 型別勝率ページで、該当試合の履歴とバトルログを確認
-- デッキタブの編集アイコンから、デッキ名・画像・型を編集
-- 0試合の相性表セルはグレー表示
+```bash
+npm run build
+```
 
-データはブラウザの localStorage に保存されます。
+## Vercel
+
+- Framework Preset: Vite
+- Build Command: `npm run build`
+- Output Directory: `dist`
+
+This version intentionally uses `vite build` only for production builds. TypeScript type checking is available separately via `npm run typecheck`.
