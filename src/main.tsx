@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BarChart3, CheckCircle2, Download, History, Plus, Settings, Trash2, XCircle } from 'lucide-react';
+import { BarChart3, ChevronDown, Check, Download, History, Plus, Search, Settings, Star, Trash2 } from 'lucide-react';
 import './styles.css';
 
 type MatchResult = 'win' | 'loss' | 'unknown';
@@ -9,7 +9,9 @@ type TurnOrder = 'first' | 'second' | 'unknown';
 type Deck = {
   id: string;
   name: string;
+  imageId: string;
   memo?: string;
+  isMyDeck: boolean;
   createdAt: string;
 };
 
@@ -26,57 +28,68 @@ type MatchRecord = {
   note: string;
 };
 
-const STORAGE_KEY = 'ptcgl-winrate-tracker-v3-manual-only';
+const STORAGE_KEY = 'ptcgl-winrate-tracker-v4-mobile-manual';
 const DEFAULT_PLAYER_NAME = 'toropoke0421';
 const DEFAULT_CREATED_AT = '2026-04-29T00:00:00.000Z';
+const IMAGE_BASE_URL = 'https://r2.limitlesstcg.net/pokemon/gen9';
 
-const defaultDeckNames = [
-  'Dragapult ex',
-  'Crustle Mysterious Rock Inn',
-  "Rocket's Mewtwo ex",
-  'Ogerpon Meganium',
-  'Festival Lead',
-  "Cynthia's Garchomp ex",
-  'Raging Bolt ex',
-  "N's Zoroark ex",
-  'Mega Lucario ex',
-  'Alakazam Powerful Hand',
-  'Ogerpon Box',
-  'Mega Starmie ex',
-  'Okidogi Adrena-Power',
-  'Tera Box',
-  "Rocket's Honchkrow",
-  "Marnie's Grimmsnarl ex",
-  "Lillie's Clefairy ex",
-  'Slowking Seek Inspiration',
-  'Mega Lopunny ex',
-  "Hop's Trevenant",
-  'Mega Absol Box',
-  'Archaludon ex',
-  "Ethan's Typhlosion",
-  'Flareon ex',
-  'Greninja ex',
-  'Hydrapple ex',
-];
+const defaultDeckData = [
+  ['dragapult', 'Dragapult ex'],
+  ['crustle', 'Crustle'],
+  ['mewtwospidops', "Rocket's Mewtwo ex"],
+  ['ogerponmeganium', 'Ogerpon Meganium'],
+  ['dipplinthwackey', 'Festival Lead'],
+  ['garchomp', "Cynthia's Garchomp ex"],
+  ['raging-bolt', 'Raging Bolt ex'],
+  ['zoroark', "N's Zoroark ex"],
+  ['lucario-mega', 'Mega Lucario ex'],
+  ['alakazam', 'Alakazam'],
+  ['ogerponogerpon-wellspring', 'Ogerpon Box'],
+  ['starmie-mega', 'Mega Starmie ex'],
+  ['okidogi', 'Okidogi'],
+  ['noctowlogerpon-wellspring', 'Tera Box'],
+  ['honchkrowporygon2', "Rocket's Honchkrow"],
+  ['grimmsnarl', "Marnie's Grimmsnarl ex"],
+  ['clefairy', "Lillie's Clefairy ex"],
+  ['slowking', 'Slowking'],
+  ['lopunny-mega', 'Mega Lopunny ex'],
+  ['trevenant', "Hop's Trevenant"],
+  ['absol-megakangaskhan-mega', 'Mega Absol Box'],
+  ['archaludon', 'Archaludon ex'],
+  ['typhlosion', "Ethan's Typhlosion"],
+  ['flareon', 'Flareon ex'],
+  ['greninja', 'Greninja ex'],
+  ['hydrapple', 'Hydrapple ex'],
+] as const;
 
-const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-
-const defaultDecks: Deck[] = defaultDeckNames.map((name) => ({
-  id: slugify(name),
+const defaultDecks: Deck[] = defaultDeckData.map(([imageId, name], index) => ({
+  id: imageId,
+  imageId,
   name,
   memo: '',
+  isMyDeck: index === 0,
   createdAt: DEFAULT_CREATED_AT,
 }));
 
 const normalize = (value: string) => value.trim().replace(/\s+/g, ' ');
+const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const deckImageUrl = (deck: Deck) => `${IMAGE_BASE_URL}/${deck.imageId || deck.id}.png`;
 
 function loadState(): { decks: Deck[]; matches: MatchRecord[]; playerName: string } {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return { decks: defaultDecks, matches: [], playerName: DEFAULT_PLAYER_NAME };
   try {
     const parsed = JSON.parse(raw);
+    const loadedDecks: Deck[] = (parsed.decks?.length ? parsed.decks : defaultDecks).map((deck: Partial<Deck>, index: number) => ({
+      id: deck.id || slugify(deck.name || `deck-${index}`),
+      imageId: deck.imageId || deck.id || slugify(deck.name || `deck-${index}`),
+      name: deck.name || `Deck ${index + 1}`,
+      memo: deck.memo || '',
+      isMyDeck: Boolean(deck.isMyDeck),
+      createdAt: deck.createdAt || DEFAULT_CREATED_AT,
+    }));
     return {
-      decks: parsed.decks?.length ? parsed.decks : defaultDecks,
+      decks: loadedDecks,
       matches: parsed.matches ?? [],
       playerName: parsed.playerName ?? DEFAULT_PLAYER_NAME,
     };
@@ -91,8 +104,8 @@ function pct(wins: number, total: number): string {
 }
 
 function resultLabel(result: MatchResult) {
-  if (result === 'win') return '勝ち';
-  if (result === 'loss') return '負け';
+  if (result === 'win') return '勝利';
+  if (result === 'loss') return '敗北';
   return '不明';
 }
 
@@ -104,6 +117,19 @@ function turnOrderLabel(turnOrder: TurnOrder) {
 
 function deckName(decks: Deck[], id: string) {
   return decks.find((deck) => deck.id === id)?.name ?? 'Unknown';
+}
+
+function findDeck(decks: Deck[], id: string) {
+  return decks.find((deck) => deck.id === id) ?? decks[0];
+}
+
+function parseTurnOrderFromBattleLog(battleLog: string, playerName: string): TurnOrder {
+  const player = normalize(playerName).toLowerCase();
+  const decidedLine = battleLog.match(/^(.+?) decided to go first\./im);
+  if (!decidedLine) return 'unknown';
+  const firstPlayer = normalize(decidedLine[1]).toLowerCase();
+  if (!player) return 'unknown';
+  return firstPlayer === player ? 'first' : 'second';
 }
 
 function buildStats(matches: MatchRecord[], decks: Deck[]) {
@@ -141,13 +167,15 @@ function App() {
   const [playerName, setPlayerName] = useState(initial.playerName);
   const [opponentName, setOpponentName] = useState('');
   const [newDeckName, setNewDeckName] = useState('');
+  const [newDeckImageId, setNewDeckImageId] = useState('');
   const [newDeckMemo, setNewDeckMemo] = useState('');
-  const [myDeckId, setMyDeckId] = useState(initial.decks[0]?.id ?? '');
+  const [myDeckId, setMyDeckId] = useState(initial.decks.find((deck) => deck.isMyDeck)?.id ?? initial.decks[0]?.id ?? '');
   const [opponentDeckId, setOpponentDeckId] = useState(initial.decks[0]?.id ?? '');
   const [battleLog, setBattleLog] = useState('');
   const [note, setNote] = useState('');
-  const [manualResult, setManualResult] = useState<MatchResult>('unknown');
-  const [manualTurnOrder, setManualTurnOrder] = useState<TurnOrder>('unknown');
+  const [manualResult, setManualResult] = useState<MatchResult>('win');
+  const [manualTurnOrder, setManualTurnOrder] = useState<TurnOrder>('first');
+  const [turnParseMessage, setTurnParseMessage] = useState('');
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ decks, matches, playerName }));
@@ -155,14 +183,27 @@ function App() {
 
   const stats = useMemo(() => buildStats(matches, decks), [matches, decks]);
 
+  const handleTurnOrderChange = (value: TurnOrder) => {
+    if (value !== 'unknown') {
+      setManualTurnOrder(value);
+      setTurnParseMessage('');
+      return;
+    }
+    const parsed = parseTurnOrderFromBattleLog(battleLog, playerName);
+    setManualTurnOrder(parsed);
+    setTurnParseMessage(parsed === 'unknown' ? 'バトルログから先攻後攻を判定できませんでした。' : `バトルログから${turnOrderLabel(parsed)}と判定しました。`);
+  };
+
   const addDeck = () => {
     const name = normalize(newDeckName);
     if (!name) return;
-    const baseId = slugify(name) || `deck-${Date.now()}`;
+    const imageId = normalize(newDeckImageId) || slugify(name);
+    const baseId = imageId || `deck-${Date.now()}`;
     const id = decks.some((deck) => deck.id === baseId) ? `${baseId}-${Date.now()}` : baseId;
-    const deck = { id, name, memo: newDeckMemo, createdAt: new Date().toISOString() };
+    const deck = { id, name, imageId, memo: newDeckMemo, isMyDeck: true, createdAt: new Date().toISOString() };
     setDecks((prev) => [...prev, deck]);
     setNewDeckName('');
+    setNewDeckImageId('');
     setNewDeckMemo('');
   };
 
@@ -170,6 +211,10 @@ function App() {
     setDecks(defaultDecks);
     setMyDeckId(defaultDecks[0].id);
     setOpponentDeckId(defaultDecks[0].id);
+  };
+
+  const toggleMyDeck = (id: string) => {
+    setDecks((prev) => prev.map((deck) => deck.id === id ? { ...deck, isMyDeck: !deck.isMyDeck } : deck));
   };
 
   const deleteDeck = (id: string) => {
@@ -202,8 +247,9 @@ function App() {
     setOpponentName('');
     setBattleLog('');
     setNote('');
-    setManualResult('unknown');
-    setManualTurnOrder('unknown');
+    setManualResult('win');
+    setManualTurnOrder('first');
+    setTurnParseMessage('');
     setTab('history');
   };
 
@@ -235,8 +281,8 @@ function App() {
       <header className="hero">
         <div>
           <p className="eyebrow">PTCGL Tracker</p>
-          <h1>勝率計算アプリ</h1>
-          <p>勝敗・先攻後攻を手動で入力し、デッキ別・マッチアップ別の勝率を記録します。</p>
+          <h1>勝率計算</h1>
+          <p>手動入力ベース。先攻後攻だけ、不明選択時にバトルログから補助判定します。</p>
         </div>
         <div className="heroStats">
           <strong>{stats.overall.winRate}</strong>
@@ -245,59 +291,65 @@ function App() {
       </header>
 
       <nav className="tabs">
-        <button className={tab === 'record' ? 'active' : ''} onClick={() => setTab('record')}><CheckCircle2 size={18} /> 対戦を記録</button>
-        <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}><History size={18} /> 対戦履歴</button>
-        <button className={tab === 'decks' ? 'active' : ''} onClick={() => setTab('decks')}><Settings size={18} /> デッキ設定</button>
+        <button className={tab === 'record' ? 'active' : ''} onClick={() => setTab('record')}><Check size={15} /> 記録</button>
+        <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}><History size={15} /> 履歴</button>
+        <button className={tab === 'decks' ? 'active' : ''} onClick={() => setTab('decks')}><Settings size={15} /> デッキ</button>
       </nav>
 
       {tab === 'record' && (
-        <main className="grid two">
-          <section className="card">
-            <h2>1. 基本設定</h2>
-            <label>自分の PTCGL プレイヤー名</label>
-            <input value={playerName} onChange={(event) => setPlayerName(event.target.value)} placeholder="toropoke0421" />
-            <label>相手の PTCGL プレイヤー名</label>
-            <input value={opponentName} onChange={(event) => setOpponentName(event.target.value)} placeholder="任意" />
-            <div className="row">
+        <main className="grid two recordGrid">
+          <section className="card compactCard">
+            <h2>基本設定</h2>
+            <div className="row smallGap">
               <div>
-                <label>自分のデッキ</label>
-                <select value={myDeckId} onChange={(event) => setMyDeckId(event.target.value)}>{decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.name}</option>)}</select>
+                <label>自分の名前</label>
+                <input value={playerName} onChange={(event) => setPlayerName(event.target.value)} placeholder="toropoke0421" />
               </div>
               <div>
-                <label>相手のデッキ</label>
-                <select value={opponentDeckId} onChange={(event) => setOpponentDeckId(event.target.value)}>{decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.name}</option>)}</select>
+                <label>相手名</label>
+                <input value={opponentName} onChange={(event) => setOpponentName(event.target.value)} placeholder="任意" />
               </div>
             </div>
+
+            <DeckPicker
+              label="マイデッキ"
+              decks={decks}
+              selectedId={myDeckId}
+              onSelect={setMyDeckId}
+              myDeckOnly
+            />
+
+            <DeckPicker
+              label="相手のデッキ"
+              decks={decks}
+              selectedId={opponentDeckId}
+              onSelect={setOpponentDeckId}
+            />
           </section>
 
-          <section className="card">
-            <h2>2. 勝敗・先攻後攻</h2>
-            <div className="manualControls full">
+          <section className="card compactCard">
+            <h2>対戦結果</h2>
+            <div className="manualControls">
               <div>
                 <label>勝敗</label>
                 <select value={manualResult} onChange={(event) => setManualResult(event.target.value as MatchResult)}>
+                  <option value="win">勝利</option>
+                  <option value="loss">敗北</option>
                   <option value="unknown">不明</option>
-                  <option value="win">勝ち</option>
-                  <option value="loss">負け</option>
                 </select>
               </div>
               <div>
                 <label>先攻・後攻</label>
-                <select value={manualTurnOrder} onChange={(event) => setManualTurnOrder(event.target.value as TurnOrder)}>
-                  <option value="unknown">不明</option>
+                <select value={manualTurnOrder} onChange={(event) => handleTurnOrderChange(event.target.value as TurnOrder)}>
                   <option value="first">先攻</option>
                   <option value="second">後攻</option>
+                  <option value="unknown">不明 / ログ判定</option>
                 </select>
               </div>
             </div>
-            <div className="analysisBox compact">
-              <div className={`resultPill ${manualResult}`}>{manualResult === 'win' ? <CheckCircle2 size={18} /> : manualResult === 'loss' ? <XCircle size={18} /> : null}{resultLabel(manualResult)}</div>
-              <div className="mini"><span>先攻後攻</span><strong>{turnOrderLabel(manualTurnOrder)}</strong></div>
-              <div className="mini"><span>自分のデッキ</span><strong>{deckName(decks, myDeckId)}</strong></div>
-              <div className="mini"><span>相手のデッキ</span><strong>{deckName(decks, opponentDeckId)}</strong></div>
-            </div>
-            <label>バトルログ / メモ用テキスト</label>
-            <textarea value={battleLog} onChange={(event) => setBattleLog(event.target.value)} placeholder="任意。OCRや自動判定は行いません。あとから見返したい場合だけ貼り付けてください。" />
+            {turnParseMessage && <p className="hint tinyHint">{turnParseMessage}</p>}
+            <label>バトルログ</label>
+            <textarea className="logArea" value={battleLog} onChange={(event) => setBattleLog(event.target.value)} placeholder="先攻後攻が分からない時だけ貼り付け。例: GXtrainer25 decided to go first." />
             <label>メモ</label>
             <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="事故、プレミ、相手の型など" />
             <button className="primary" onClick={saveMatch}>記録する</button>
@@ -307,10 +359,10 @@ function App() {
 
       {tab === 'history' && (
         <main className="grid one">
-          <section className="card">
+          <section className="card compactCard">
             <div className="sectionHeader">
-              <h2>勝率サマリー</h2>
-              <button onClick={exportCsv}><Download size={16} /> CSV Export</button>
+              <h2>サマリー</h2>
+              <button onClick={exportCsv}><Download size={14} /> CSV</button>
             </div>
             <div className="summaryCards">
               <div><span>全体勝率</span><strong>{stats.overall.winRate}</strong><small>{stats.overall.wins}勝 {stats.overall.losses}敗</small></div>
@@ -320,14 +372,14 @@ function App() {
             </div>
           </section>
 
-          <section className="card">
-            <h2><BarChart3 size={18} /> デッキ別勝率</h2>
+          <section className="card compactCard">
+            <h2><BarChart3 size={16} /> デッキ別勝率</h2>
             <StatsTable title="自分のデッキ別" rows={stats.byMyDeck} />
             <StatsTable title="相手のデッキ別" rows={stats.byOpponentDeck} />
             <StatsTable title="マッチアップ別" rows={stats.matchups} />
           </section>
 
-          <section className="card">
+          <section className="card compactCard">
             <h2>Transaction History</h2>
             <div className="historyList">
               {matches.length === 0 && <p className="empty">まだ対戦履歴がありません。</p>}
@@ -337,12 +389,11 @@ function App() {
                     <span className={`dot ${match.result}`}></span>
                     <div>
                       <strong>{deckName(decks, match.myDeckId)} vs {deckName(decks, match.opponentDeckId)}</strong>
-                      <p>{new Date(match.playedAt).toLocaleString()} / {turnOrderLabel(match.turnOrder)} / Opponent: {match.opponentName || '-'}</p>
+                      <p>{new Date(match.playedAt).toLocaleString()} / {resultLabel(match.result)} / {turnOrderLabel(match.turnOrder)} / {match.opponentName || '-'}</p>
                       {match.note && <p className="note">{match.note}</p>}
                     </div>
                   </div>
-                  <div className={`historyResult ${match.result}`}>{resultLabel(match.result)}</div>
-                  <button className="iconButton" onClick={() => setMatches((prev) => prev.filter((item) => item.id !== match.id))}><Trash2 size={16} /></button>
+                  <button className="iconButton" onClick={() => setMatches((prev) => prev.filter((item) => item.id !== match.id))}><Trash2 size={14} /></button>
                 </article>
               ))}
             </div>
@@ -352,27 +403,31 @@ function App() {
 
       {tab === 'decks' && (
         <main className="grid two">
-          <section className="card">
+          <section className="card compactCard">
             <div className="sectionHeader">
               <h2>デッキ追加</h2>
-              <button onClick={resetDefaultDecks}>デフォルトに戻す</button>
+              <button onClick={resetDefaultDecks}>初期化</button>
             </div>
             <label>デッキ名</label>
             <input value={newDeckName} onChange={(event) => setNewDeckName(event.target.value)} placeholder="例: Dragapult ex" />
+            <label>画像ID</label>
+            <input value={newDeckImageId} onChange={(event) => setNewDeckImageId(event.target.value)} placeholder="例: dragapult / 空欄ならデッキ名から自動生成" />
             <label>メモ</label>
             <input value={newDeckMemo} onChange={(event) => setNewDeckMemo(event.target.value)} placeholder="型、採用カードなど" />
-            <button className="primary" onClick={addDeck}><Plus size={16} /> 追加</button>
+            <button className="primary" onClick={addDeck}><Plus size={14} /> 追加</button>
           </section>
-          <section className="card">
+          <section className="card compactCard">
             <h2>登録デッキ</h2>
             <div className="deckList">
               {decks.map((deck) => (
                 <div className="deckItem" key={deck.id}>
-                  <div>
+                  <img src={deckImageUrl(deck)} alt={deck.imageId} onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+                  <div className="deckText">
                     <strong>{deck.name}</strong>
-                    <p>{deck.memo || 'No memo'}</p>
+                    <p>{deck.imageId}</p>
                   </div>
-                  <button className="iconButton" onClick={() => deleteDeck(deck.id)}><Trash2 size={16} /></button>
+                  <button className={`iconButton ${deck.isMyDeck ? 'starred' : ''}`} onClick={() => toggleMyDeck(deck.id)} title="マイデッキ切替"><Star size={14} /></button>
+                  <button className="iconButton" onClick={() => deleteDeck(deck.id)}><Trash2 size={14} /></button>
                 </div>
               ))}
             </div>
@@ -383,15 +438,71 @@ function App() {
   );
 }
 
+function DeckPicker({ label, decks, selectedId, onSelect, myDeckOnly = false }: { label: string; decks: Deck[]; selectedId: string; onSelect: (id: string) => void; myDeckOnly?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [showAll, setShowAll] = useState(!myDeckOnly);
+  const selectedDeck = findDeck(decks, selectedId);
+  const visibleDecks = decks
+    .filter((deck) => showAll || deck.isMyDeck)
+    .filter((deck) => deck.name.toLowerCase().includes(query.toLowerCase()) || deck.imageId.toLowerCase().includes(query.toLowerCase()));
+
+  useEffect(() => {
+    if (myDeckOnly && !decks.some((deck) => deck.isMyDeck && deck.id === selectedId)) {
+      const firstMyDeck = decks.find((deck) => deck.isMyDeck);
+      if (firstMyDeck) onSelect(firstMyDeck.id);
+    }
+  }, [decks, myDeckOnly, onSelect, selectedId]);
+
+  return (
+    <div className="deckPicker">
+      <label>{label}</label>
+      <button className="selectedDeck" type="button" onClick={() => setOpen((prev) => !prev)}>
+        <DeckAvatar deck={selectedDeck} />
+        <span>{selectedDeck?.name ?? '未選択'}</span>
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <div className="deckPickerPanel">
+          <div className="deckSearch">
+            <Search size={13} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="デッキ検索" />
+          </div>
+          {myDeckOnly && (
+            <button type="button" className="textButton" onClick={() => setShowAll((prev) => !prev)}>
+              {showAll ? 'マイデッキのみ表示' : '全デッキから選ぶ'}
+            </button>
+          )}
+          <div className="deckGrid">
+            {visibleDecks.map((deck) => (
+              <button type="button" key={deck.id} className={`deckChoice ${deck.id === selectedId ? 'selected' : ''}`} onClick={() => { onSelect(deck.id); setOpen(false); }}>
+                <DeckAvatar deck={deck} />
+                <span>{deck.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeckAvatar({ deck }: { deck?: Deck }) {
+  if (!deck) return <span className="deckAvatar fallback">?</span>;
+  return <img className="deckAvatar" src={deckImageUrl(deck)} alt={deck.imageId} onError={(event) => { event.currentTarget.classList.add('hiddenImage'); }} />;
+}
+
 function StatsTable({ title, rows }: { title: string; rows: Array<{ label: string; wins: number; losses: number; total: number; winRate: string }> }) {
   return (
     <div className="statsTableWrap">
       <h3>{title}</h3>
       {rows.length === 0 ? <p className="empty">データなし</p> : (
-        <table>
-          <thead><tr><th>項目</th><th>勝率</th><th>勝ち</th><th>負け</th><th>試合</th></tr></thead>
-          <tbody>{rows.map((row) => <tr key={row.label}><td>{row.label}</td><td>{row.winRate}</td><td>{row.wins}</td><td>{row.losses}</td><td>{row.total}</td></tr>)}</tbody>
-        </table>
+        <div className="tableScroller">
+          <table>
+            <thead><tr><th>項目</th><th>勝率</th><th>勝</th><th>負</th><th>試合</th></tr></thead>
+            <tbody>{rows.map((row) => <tr key={row.label}><td>{row.label}</td><td>{row.winRate}</td><td>{row.wins}</td><td>{row.losses}</td><td>{row.total}</td></tr>)}</tbody>
+          </table>
+        </div>
       )}
     </div>
   );
