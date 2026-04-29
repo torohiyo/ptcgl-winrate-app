@@ -12,7 +12,7 @@ type MatchRecord = {
   myDeckId: string; opponentDeckId: string; result: MatchResult; turnOrder: TurnOrder; battleLog: string; note: string;
 };
 
-const STORAGE_KEY = 'ptcgl-winrate-tracker-v6-matchup-matrix';
+const STORAGE_KEY = 'ptcgl-winrate-tracker-v7-matchup-matrix';
 const DEFAULT_PLAYER_NAME = 'toropoke0421';
 const DEFAULT_CREATED_AT = '2026-04-29T00:00:00.000Z';
 const IMAGE_BASE_URL = 'https://r2.limitlesstcg.net/pokemon/gen9';
@@ -209,7 +209,7 @@ function matchupTone(rate: number | null) {
   if (rate >= 30) return 'rateBad';
   return 'rateLow';
 }
-function formatMatrixRate(rate: number | null) { return rate === null ? '' : rate.toFixed(1); }
+function formatMatrixRate(rate: number | null) { return rate === null ? '0.0' : rate.toFixed(1); }
 
 function MatchupMatrix({ decks, matches }: { decks: Deck[]; matches: MatchRecord[] }) {
   const rowDecks = decks.filter((d) => d.isMyDeck || matches.some((m) => m.myDeckId === d.id));
@@ -219,8 +219,8 @@ function MatchupMatrix({ decks, matches }: { decks: Deck[]; matches: MatchRecord
       <thead>
         <tr>
           <th className="matrixCorner">デッキ名</th>
-          {decks.map((d) => <th className="matrixHead" key={d.id}><DeckAvatar deck={d}/><span>{d.name}</span></th>)}
-          <th className="matrixHead matrixTotalHead"><span>総合</span></th>
+          <th className="matrixTotalHead">総合</th>
+          {decks.map((d) => <th className="matrixHead" key={d.id} title={d.name}><DeckAvatar deck={d}/></th>)}
         </tr>
       </thead>
       <tbody>
@@ -228,12 +228,12 @@ function MatchupMatrix({ decks, matches }: { decks: Deck[]; matches: MatchRecord
           const total = getMatchupSummary(matches, my.id);
           return <tr key={my.id}>
             <th className="matrixRowHead"><span>{my.name}</span><DeckAvatar deck={my}/></th>
+            <td className={`matrixCell totalCell ${matchupTone(total.rate)}`} title={total.total ? `${total.wins}勝 ${total.losses}敗 / ${total.total}戦` : 'データなし'}>{formatMatrixRate(total.rate)}</td>
             {decks.map((opp) => {
               const s = getMatchupSummary(matches, my.id, opp.id);
               const tone = matchupTone(s.rate);
               return <td className={`matrixCell ${tone}`} key={`${my.id}-${opp.id}`} title={s.total ? `${s.wins}勝 ${s.losses}敗 / ${s.total}戦` : 'データなし'}>{formatMatrixRate(s.rate)}</td>;
             })}
-            <td className={`matrixCell totalCell ${matchupTone(total.rate)}`} title={total.total ? `${total.wins}勝 ${total.losses}敗 / ${total.total}戦` : 'データなし'}>{formatMatrixRate(total.rate)}</td>
           </tr>;
         })}
       </tbody>
