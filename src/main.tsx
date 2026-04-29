@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   ArrowLeft,
   Check,
@@ -80,6 +81,51 @@ const DUSKULL_IMAGE_URL =
   "https://www.pokemon-card.com/assets/images/card_images/large/SV6a/045895_P_YONOWARU.jpg";
 const RUINS_IMAGE_URL =
   "https://www.pokemon-card.com/assets/images/card_images/large/M1L/047796_T_ABUNAIHAIKIXYO.jpg";
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as
+  | string
+  | undefined;
+const supabase: SupabaseClient | null =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+const isCloudEnabled = Boolean(supabase);
+
+type SyncStatus = "cloud" | "local" | "loading" | "error";
+
+type CloudDeckRow = {
+  id: string;
+  name: string;
+  image_id: string | null;
+  image_url: string | null;
+  memo: string | null;
+  is_my_deck: boolean | null;
+  created_at: string | null;
+};
+
+type CloudVariantRow = {
+  id: string;
+  deck_id: string;
+  name: string;
+  image_url: string | null;
+  created_at?: string | null;
+};
+
+type CloudMatchRow = {
+  id: string;
+  played_at: string;
+  player_name: string | null;
+  opponent_name: string | null;
+  my_deck_id: string;
+  my_variant_id: string | null;
+  opponent_deck_id: string;
+  opponent_variant_id: string | null;
+  result: MatchResult;
+  turn_order: TurnOrder;
+  battle_log: string | null;
+  note: string | null;
+};
 
 const uid = () => {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto)
@@ -267,6 +313,174 @@ function loadState(): {
   return { decks: defaultDecks, matches: [], playerName: DEFAULT_PLAYER_NAME };
 }
 
+function deckToCloudRow(deck: Deck) {
+  return {
+    id: deck.id,
+    name: deck.name,
+    image_id: deck.imageId,
+    image_url: cleanUrl(deck.imageUrl || ""),
+    memo: deck.memo || "",
+    is_my_deck: deck.isMyDeck,
+    created_at: deck.createdAt,
+  };
+}
+
+function variantToCloudRow(deckId: string, variant: DeckVariant) {
+  return {
+    id: variant.id,
+    deck_id: deckId,
+    name: variant.name,
+    image_url: cleanUrl(variant.imageUrl || ""),
+  };
+}
+
+function matchToCloudRow(match: MatchRecord) {
+  return {
+    id: match.id,
+    played_at: match.playedAt,
+    player_name: match.playerName,
+    opponent_name: match.opponentName,
+    my_deck_id: match.myDeckId,
+    my_variant_id: match.myVariantId || null,
+    opponent_deck_id: match.opponentDeckId,
+    opponent_variant_id: match.opponentVariantId || null,
+    result: match.result,
+    turn_order: match.turnOrder,
+    battle_log: match.battleLog,
+    note: match.note,
+  };
+}
+
+function rowsToDecks(
+  deckRows: CloudDeckRow[],
+  variantRows: CloudVariantRow[],
+): Deck[] {
+  const variantsByDeck = new Map<string, DeckVariant[]>();
+  variantRows.forEach((row) => {
+    const list = variantsByDeck.get(row.deck_id) || [];
+    list.push({
+      id: row.id,
+      name: row.name,
+      imageUrl: row.image_url || "",
+    });
+    variantsByDeck.set(row.deck_id, list);
+  });
+  return ensureDefaultDecks(
+    deckRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      imageId: row.image_id || row.id,
+      imageUrl: row.image_url || "",
+      memo: row.memo || "",
+      isMyDeck: Boolean(row.is_my_deck),
+      variants: variantsByDeck.get(row.id) || [],
+      createdAt: row.created_at || DEFAULT_CREATED_AT,
+    })),
+  );
+}
+
+function rowsToMatches(rows: CloudMatchRow[]): MatchRecord[] {
+  return rows.map((row) => ({
+    id: row.id,
+    playedAt: row.played_at,
+    playerName: row.player_name || DEFAULT_PLAYER_NAME,
+    opponentName: row.opponent_name || "",
+    myDeckId: row.my_deck_id,
+    myVariantId: row.my_variant_id || "",
+    opponentDeckId: row.opponent_deck_id,
+    opponentVariantId: row.opponent_variant_id || "",
+    result: row.result,
+    turnOrder: row.turn_order,
+    battleLog: row.battle_log || "",
+    note: row.note || "",
+  }));
+}
+
+async function seedDefaultDecksToCloud(client: SupabaseClient) {
+  await client.from("ptcgl_decks").upsert(defaultDecks.map(deckToCloudRow));
+  const variantRows = defaultDecks.flatMap((deck) =>
+    deck.variants.map((variant) => variantToCloudRow(deck.id, variant)),
+  );
+  if (variantRows.length) {
+    await client.from("ptcgl_deck_variants").upsert(variantRows);
+  }
+}
+
+async function fetchCloudState(client: SupabaseClient) {
+  const { data: deckRows, error: deckError } = await client
+    .from("ptcgl_decks")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (deckError) throw deckError;
+
+  if (!deckRows || deckRows.length === 0) {
+    await seedDefaultDecksToCloud(client);
+    return fetchCloudState(client);
+  }
+
+  const { data: variantRows, error: variantError } = await client
+    .from("ptcgl_deck_variants")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (variantError) throw variantError;
+
+  const { data: matchRows, error: matchError } = await client
+    .from("ptcgl_matches")
+    .select("*")
+    .order("played_at", { ascending: false });
+  if (matchError) throw matchError;
+
+  return {
+    decks: rowsToDecks((deckRows || []) as CloudDeckRow[], (variantRows || []) as CloudVariantRow[]),
+    matches: rowsToMatches((matchRows || []) as CloudMatchRow[]),
+  };
+}
+
+async function persistDeckToCloud(deck: Deck) {
+  if (!supabase) return;
+  const { error: deckError } = await supabase
+    .from("ptcgl_decks")
+    .upsert(deckToCloudRow(deck));
+  if (deckError) throw deckError;
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from("ptcgl_deck_variants")
+    .select("id")
+    .eq("deck_id", deck.id);
+  if (existingError) throw existingError;
+
+  const currentIds = new Set(deck.variants.map((variant) => variant.id));
+  const removedIds = ((existingRows || []) as Array<{ id: string }>)
+    .map((row) => row.id)
+    .filter((id) => !currentIds.has(id));
+  if (removedIds.length) {
+    const { error: deleteError } = await supabase
+      .from("ptcgl_deck_variants")
+      .delete()
+      .in("id", removedIds);
+    if (deleteError) throw deleteError;
+  }
+
+  const rows = deck.variants.map((variant) => variantToCloudRow(deck.id, variant));
+  if (rows.length) {
+    const { error: variantError } = await supabase
+      .from("ptcgl_deck_variants")
+      .upsert(rows);
+    if (variantError) throw variantError;
+  }
+}
+
+async function deleteDeckFromCloud(deckId: string) {
+  if (!supabase) return;
+  const { error } = await supabase.from("ptcgl_decks").delete().eq("id", deckId);
+  if (error) throw error;
+}
+
+async function persistMatchToCloud(match: MatchRecord) {
+  if (!supabase) return;
+  const { error } = await supabase.from("ptcgl_matches").insert(matchToCloudRow(match));
+  if (error) throw error;
+}
 function parseTurnOrderFromBattleLog(
   battleLog: string,
   playerName: string,
@@ -382,6 +596,75 @@ function App() {
   const myDeckOptions = decks.filter((deck) => deck.isMyDeck);
   const overall = useMemo(() => summarize(matches), [matches]);
 
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(
+    isCloudEnabled ? "loading" : "local",
+  );
+  const [syncMessage, setSyncMessage] = useState(
+    isCloudEnabled
+      ? "Supabaseに接続中"
+      : "ローカル保存中：VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY を設定するとクラウド同期されます。",
+  );
+
+  const loadFromCloud = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      setSyncStatus("loading");
+      const cloudState = await fetchCloudState(supabase);
+      setDecks(cloudState.decks);
+      setMatches(cloudState.matches);
+      const preferredDeck =
+        cloudState.decks.find((deck) => deck.isMyDeck) || cloudState.decks[0];
+      if (
+        preferredDeck &&
+        !cloudState.decks.some((deck) => deck.id === myDeckId)
+      ) {
+        setMyDeckId(preferredDeck.id);
+      }
+      if (
+        preferredDeck &&
+        !cloudState.decks.some((deck) => deck.id === opponentDeckId)
+      ) {
+        setOpponentDeckId(preferredDeck.id);
+      }
+      setSyncStatus("cloud");
+      setSyncMessage(
+        "Supabaseと同期中：別端末からも同じデータを見られます。リアルタイム更新も有効です。",
+      );
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage(
+        "Supabaseの読み込みに失敗しました。環境変数・SQL・RLS policyを確認してください。現在はローカル表示を維持しています。",
+      );
+    }
+  }, [myDeckId, opponentDeckId]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    loadFromCloud();
+    const channel = supabase
+      .channel("ptcgl-shared-state")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ptcgl_decks" },
+        () => loadFromCloud(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ptcgl_deck_variants" },
+        () => loadFromCloud(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ptcgl_matches" },
+        () => loadFromCloud(),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadFromCloud]);
+
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
@@ -432,7 +715,7 @@ function App() {
     );
   };
 
-  const saveMatch = () => {
+  const saveMatch = async () => {
     const myCurrentDeck = getDeck(decks, myDeckId);
     const opponentCurrentDeck = getDeck(decks, opponentDeckId);
     const finalMyVariantId = myCurrentDeck.variants.length
@@ -441,9 +724,7 @@ function App() {
         : myCurrentDeck.variants[0].id
       : "";
     const finalOpponentVariantId = opponentCurrentDeck.variants.length
-      ? opponentCurrentDeck.variants.some(
-          (variant) => variant.id === opponentVariantId,
-        )
+      ? opponentCurrentDeck.variants.some((variant) => variant.id === opponentVariantId)
         ? opponentVariantId
         : opponentCurrentDeck.variants[0].id
       : "";
@@ -462,6 +743,14 @@ function App() {
       note,
     };
     setMatches((prev) => [record, ...prev]);
+    try {
+      await persistMatchToCloud(record);
+      if (supabase) setSyncMessage("試合をSupabaseに保存しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("試合のクラウド保存に失敗しました。ローカルには残っています。");
+    }
     setOpponentName("");
     setBattleLog("");
     setNote("");
@@ -490,30 +779,34 @@ function App() {
     });
   };
 
-  const saveDeckDraft = () => {
+  const saveDeckDraft = async () => {
     if (!draftDeck || !editingDeckId) return;
     const cleanName = normalize(draftDeck.name);
     if (!cleanName) return;
-    setDecks((prev) =>
-      prev.map((deck) =>
-        deck.id === editingDeckId
-          ? {
-              ...deck,
-              name: cleanName,
-              imageId: normalize(draftDeck.imageId) || deck.imageId,
-              imageUrl: cleanUrl(draftDeck.imageUrl),
-              memo: draftDeck.memo,
-              isMyDeck: draftDeck.isMyDeck,
-              variants: draftDeck.variants.map((variant, index) => ({
-                id:
-                  variant.id || slugify(variant.name || `variant-${index + 1}`),
-                name: normalize(variant.name) || `型 ${index + 1}`,
-                imageUrl: cleanUrl(variant.imageUrl || ""),
-              })),
-            }
-          : deck,
-      ),
-    );
+    const baseDeck = decks.find((deck) => deck.id === editingDeckId) || defaultDecks[0];
+    const updatedDeck: Deck = {
+      ...baseDeck,
+      id: editingDeckId,
+      name: cleanName,
+      imageId: normalize(draftDeck.imageId) || baseDeck.imageId,
+      imageUrl: cleanUrl(draftDeck.imageUrl),
+      memo: draftDeck.memo,
+      isMyDeck: draftDeck.isMyDeck,
+      variants: draftDeck.variants.map((variant, index) => ({
+        id: variant.id || slugify(variant.name || `variant-${index + 1}`),
+        name: normalize(variant.name) || `型 ${index + 1}`,
+        imageUrl: cleanUrl(variant.imageUrl || ""),
+      })),
+    };
+    setDecks((prev) => prev.map((deck) => (deck.id === editingDeckId ? updatedDeck : deck)));
+    try {
+      await persistDeckToCloud(updatedDeck);
+      if (supabase) setSyncMessage("デッキ編集をSupabaseに保存しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("デッキ編集のクラウド保存に失敗しました。ローカルには反映されています。");
+    }
     setEditingDeckId(null);
     setDraftDeck(null);
   };
@@ -547,43 +840,62 @@ function App() {
     });
   };
 
-  const addDeck = () => {
+  const addDeck = async () => {
     const name = normalize(newDeckName);
     if (!name) return;
     const id = slugify(name);
-    const finalId = decks.some((deck) => deck.id === id)
-      ? `${id}-${Date.now()}`
-      : id;
-    setDecks((prev) => [
-      ...prev,
-      {
-        id: finalId,
-        name,
-        imageId: finalId,
-        imageUrl: "",
-        memo: "",
-        isMyDeck: true,
-        variants: [],
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+    const finalId = decks.some((deck) => deck.id === id) ? `${id}-${Date.now()}` : id;
+    const newDeck: Deck = {
+      id: finalId,
+      name,
+      imageId: finalId,
+      imageUrl: "",
+      memo: "",
+      isMyDeck: true,
+      variants: [],
+      createdAt: new Date().toISOString(),
+    };
+    setDecks((prev) => [...prev, newDeck]);
+    try {
+      await persistDeckToCloud(newDeck);
+      if (supabase) setSyncMessage("新しいデッキをSupabaseに追加しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("デッキ追加のクラウド保存に失敗しました。ローカルには反映されています。");
+    }
     setNewDeckName("");
   };
 
-  const deleteDeck = (id: string) => {
+  const deleteDeck = async (id: string) => {
     if (decks.length <= 1) return;
     const fallback = decks.find((deck) => deck.id !== id)?.id || "dragapult";
     setDecks((prev) => prev.filter((deck) => deck.id !== id));
+    try {
+      await deleteDeckFromCloud(id);
+      if (supabase) setSyncMessage("デッキをSupabaseから削除しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("デッキ削除のクラウド反映に失敗しました。ローカルには反映されています。");
+    }
     setMyDeckId((prev) => (prev === id ? fallback : prev));
     setOpponentDeckId((prev) => (prev === id ? fallback : prev));
   };
 
-  const toggleMyDeck = (id: string) => {
-    setDecks((prev) =>
-      prev.map((deck) =>
-        deck.id === id ? { ...deck, isMyDeck: !deck.isMyDeck } : deck,
-      ),
-    );
+  const toggleMyDeck = async (id: string) => {
+    const target = decks.find((deck) => deck.id === id);
+    if (!target) return;
+    const updated = { ...target, isMyDeck: !target.isMyDeck };
+    setDecks((prev) => prev.map((deck) => (deck.id === id ? updated : deck)));
+    try {
+      await persistDeckToCloud(updated);
+      if (supabase) setSyncMessage("マイデッキ設定をSupabaseに保存しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("マイデッキ設定のクラウド保存に失敗しました。ローカルには反映されています。");
+    }
   };
 
   const exportCsv = () => {
@@ -638,6 +950,7 @@ function App() {
         <div>
           <p>PTCGL Tracker</p>
           <h1>勝率計算</h1>
+          <span className={`syncBadge ${syncStatus}`}>{syncMessage}</span>
         </div>
         <div className="heroStats">
           <strong>{overall.winRate.toFixed(1)}%</strong>
