@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   ArrowLeft,
   Check,
@@ -86,11 +85,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as
   | string
   | undefined;
-const supabase: SupabaseClient | null =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
-const isCloudEnabled = Boolean(supabase);
+const isCloudEnabled = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 type SyncStatus = "cloud" | "local" | "loading" | "error";
 
@@ -396,90 +391,132 @@ function rowsToMatches(rows: CloudMatchRow[]): MatchRecord[] {
   }));
 }
 
-async function seedDefaultDecksToCloud(client: SupabaseClient) {
-  await client.from("ptcgl_decks").upsert(defaultDecks.map(deckToCloudRow));
+async function supabaseRequest<T>(
+  table: string,
+  options: {
+    method?: string;
+    query?: string;
+    body?: unknown;
+    prefer?: string;
+  } = {},
+): Promise<T> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error("Supabase environment variables are missing.");
+  }
+
+  const baseUrl = SUPABASE_URL.replace(/\/$/, "");
+  const query = options.query ? `?${options.query}` : "";
+  const response = await fetch(`${baseUrl}/rest/v1/${table}${query}`, {
+    method: options.method || "GET",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: options.prefer || "return=representation",
+    },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`${table} ${response.status}: ${message}`);
+  }
+
+  if (response.status === 204) return [] as T;
+  const text = await response.text();
+  return text ? (JSON.parse(text) as T) : ([] as T);
+}
+
+async function upsertRows(table: string, rows: unknown) {
+  return supabaseRequest(table, {
+    method: "POST",
+    query: "on_conflict=id",
+    body: rows,
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+}
+
+async function seedDefaultDecksToCloud() {
+  await upsertRows("ptcgl_decks", defaultDecks.map(deckToCloudRow));
   const variantRows = defaultDecks.flatMap((deck) =>
     deck.variants.map((variant) => variantToCloudRow(deck.id, variant)),
   );
   if (variantRows.length) {
-    await client.from("ptcgl_deck_variants").upsert(variantRows);
+    await upsertRows("ptcgl_deck_variants", variantRows);
   }
 }
 
-async function fetchCloudState(client: SupabaseClient) {
-  const { data: deckRows, error: deckError } = await client
-    .from("ptcgl_decks")
-    .select("*")
-    .order("created_at", { ascending: true });
-  if (deckError) throw deckError;
+async function fetchCloudState() {
+  const deckRows = await supabaseRequest<CloudDeckRow[]>("ptcgl_decks", {
+    query: "select=*&order=created_at.asc",
+  });
 
   if (!deckRows || deckRows.length === 0) {
-    await seedDefaultDecksToCloud(client);
-    return fetchCloudState(client);
+    await seedDefaultDecksToCloud();
+    return fetchCloudState();
   }
 
-  const { data: variantRows, error: variantError } = await client
-    .from("ptcgl_deck_variants")
-    .select("*")
-    .order("created_at", { ascending: true });
-  if (variantError) throw variantError;
+  const variantRows = await supabaseRequest<CloudVariantRow[]>(
+    "ptcgl_deck_variants",
+    { query: "select=*&order=created_at.asc" },
+  );
 
-  const { data: matchRows, error: matchError } = await client
-    .from("ptcgl_matches")
-    .select("*")
-    .order("played_at", { ascending: false });
-  if (matchError) throw matchError;
+  const matchRows = await supabaseRequest<CloudMatchRow[]>("ptcgl_matches", {
+    query: "select=*&order=played_at.desc",
+  });
 
   return {
-    decks: rowsToDecks((deckRows || []) as CloudDeckRow[], (variantRows || []) as CloudVariantRow[]),
-    matches: rowsToMatches((matchRows || []) as CloudMatchRow[]),
+    decks: rowsToDecks(deckRows || [], variantRows || []),
+    matches: rowsToMatches(matchRows || []),
   };
 }
 
 async function persistDeckToCloud(deck: Deck) {
-  if (!supabase) return;
-  const { error: deckError } = await supabase
-    .from("ptcgl_decks")
-    .upsert(deckToCloudRow(deck));
-  if (deckError) throw deckError;
+  if (!isCloudEnabled) return;
+  await upsertRows("ptcgl_decks", deckToCloudRow(deck));
 
-  const { data: existingRows, error: existingError } = await supabase
-    .from("ptcgl_deck_variants")
-    .select("id")
-    .eq("deck_id", deck.id);
-  if (existingError) throw existingError;
+  const existingRows = await supabaseRequest<Array<{ id: string }>>(
+    "ptcgl_deck_variants",
+    { query: `select=id&deck_id=eq.${encodeURIComponent(deck.id)}` },
+  );
 
   const currentIds = new Set(deck.variants.map((variant) => variant.id));
-  const removedIds = ((existingRows || []) as Array<{ id: string }>)
+  const removedIds = (existingRows || [])
     .map((row) => row.id)
     .filter((id) => !currentIds.has(id));
-  if (removedIds.length) {
-    const { error: deleteError } = await supabase
-      .from("ptcgl_deck_variants")
-      .delete()
-      .in("id", removedIds);
-    if (deleteError) throw deleteError;
-  }
+
+  await Promise.all(
+    removedIds.map((id) =>
+      supabaseRequest("ptcgl_deck_variants", {
+        method: "DELETE",
+        query: `id=eq.${encodeURIComponent(id)}`,
+        prefer: "return=minimal",
+      }),
+    ),
+  );
 
   const rows = deck.variants.map((variant) => variantToCloudRow(deck.id, variant));
   if (rows.length) {
-    const { error: variantError } = await supabase
-      .from("ptcgl_deck_variants")
-      .upsert(rows);
-    if (variantError) throw variantError;
+    await upsertRows("ptcgl_deck_variants", rows);
   }
 }
 
 async function deleteDeckFromCloud(deckId: string) {
-  if (!supabase) return;
-  const { error } = await supabase.from("ptcgl_decks").delete().eq("id", deckId);
-  if (error) throw error;
+  if (!isCloudEnabled) return;
+  await supabaseRequest("ptcgl_decks", {
+    method: "DELETE",
+    query: `id=eq.${encodeURIComponent(deckId)}`,
+    prefer: "return=minimal",
+  });
 }
 
 async function persistMatchToCloud(match: MatchRecord) {
-  if (!supabase) return;
-  const { error } = await supabase.from("ptcgl_matches").insert(matchToCloudRow(match));
-  if (error) throw error;
+  if (!isCloudEnabled) return;
+  await supabaseRequest("ptcgl_matches", {
+    method: "POST",
+    body: matchToCloudRow(match),
+    prefer: "return=minimal",
+  });
 }
 function parseTurnOrderFromBattleLog(
   battleLog: string,
@@ -606,10 +643,10 @@ function App() {
   );
 
   const loadFromCloud = useCallback(async () => {
-    if (!supabase) return;
+    if (!isCloudEnabled) return;
     try {
       setSyncStatus("loading");
-      const cloudState = await fetchCloudState(supabase);
+      const cloudState = await fetchCloudState();
       setDecks(cloudState.decks);
       setMatches(cloudState.matches);
       const preferredDeck =
@@ -628,7 +665,7 @@ function App() {
       }
       setSyncStatus("cloud");
       setSyncMessage(
-        "Supabaseと同期中：別端末からも同じデータを見られます。リアルタイム更新も有効です。",
+        "Supabaseと同期中：別端末からも同じデータを見られます。10秒ごとに自動更新します。",
       );
     } catch (error) {
       console.error(error);
@@ -640,29 +677,10 @@ function App() {
   }, [myDeckId, opponentDeckId]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!isCloudEnabled) return;
     loadFromCloud();
-    const channel = supabase
-      .channel("ptcgl-shared-state")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "ptcgl_decks" },
-        () => loadFromCloud(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "ptcgl_deck_variants" },
-        () => loadFromCloud(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "ptcgl_matches" },
-        () => loadFromCloud(),
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const timer = window.setInterval(() => loadFromCloud(), 10000);
+    return () => window.clearInterval(timer);
   }, [loadFromCloud]);
 
   useEffect(() => {
@@ -745,7 +763,7 @@ function App() {
     setMatches((prev) => [record, ...prev]);
     try {
       await persistMatchToCloud(record);
-      if (supabase) setSyncMessage("試合をSupabaseに保存しました。");
+      if (isCloudEnabled) setSyncMessage("試合をSupabaseに保存しました。");
     } catch (error) {
       console.error(error);
       setSyncStatus("error");
@@ -801,7 +819,7 @@ function App() {
     setDecks((prev) => prev.map((deck) => (deck.id === editingDeckId ? updatedDeck : deck)));
     try {
       await persistDeckToCloud(updatedDeck);
-      if (supabase) setSyncMessage("デッキ編集をSupabaseに保存しました。");
+      if (isCloudEnabled) setSyncMessage("デッキ編集をSupabaseに保存しました。");
     } catch (error) {
       console.error(error);
       setSyncStatus("error");
@@ -858,7 +876,7 @@ function App() {
     setDecks((prev) => [...prev, newDeck]);
     try {
       await persistDeckToCloud(newDeck);
-      if (supabase) setSyncMessage("新しいデッキをSupabaseに追加しました。");
+      if (isCloudEnabled) setSyncMessage("新しいデッキをSupabaseに追加しました。");
     } catch (error) {
       console.error(error);
       setSyncStatus("error");
@@ -873,7 +891,7 @@ function App() {
     setDecks((prev) => prev.filter((deck) => deck.id !== id));
     try {
       await deleteDeckFromCloud(id);
-      if (supabase) setSyncMessage("デッキをSupabaseから削除しました。");
+      if (isCloudEnabled) setSyncMessage("デッキをSupabaseから削除しました。");
     } catch (error) {
       console.error(error);
       setSyncStatus("error");
@@ -890,7 +908,7 @@ function App() {
     setDecks((prev) => prev.map((deck) => (deck.id === id ? updated : deck)));
     try {
       await persistDeckToCloud(updated);
-      if (supabase) setSyncMessage("マイデッキ設定をSupabaseに保存しました。");
+      if (isCloudEnabled) setSyncMessage("マイデッキ設定をSupabaseに保存しました。");
     } catch (error) {
       console.error(error);
       setSyncStatus("error");

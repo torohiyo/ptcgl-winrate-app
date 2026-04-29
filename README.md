@@ -51,3 +51,19 @@ Output Directory: dist
 ## 注意
 
 現版は「全員で1つの共通DBを見る」前提です。`supabase/schema.sql` では anon key から読み書き可能な public policy を設定しています。URLを知っている人全員が編集できるため、外部公開する場合は Supabase Auth を入れて RLS を絞ってください。
+
+
+## v14 note
+
+Vercel の `npm install` 失敗を避けるため、`@supabase/supabase-js` 依存を外し、標準 `fetch` で Supabase REST API に接続する構成に変更しています。
+
+Vercel 設定:
+
+- Install Command: `npm install`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+
+Environment Variables:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
