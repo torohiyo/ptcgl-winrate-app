@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createWorker } from 'tesseract.js';
-import { BarChart3, Camera, CheckCircle2, Download, History, Plus, Settings, Trash2, Upload, XCircle } from 'lucide-react';
+import { BarChart3, CheckCircle2, Download, History, Plus, Settings, Trash2, XCircle } from 'lucide-react';
 import './styles.css';
 
 type MatchResult = 'win' | 'loss' | 'unknown';
@@ -23,91 +22,53 @@ type MatchRecord = {
   opponentDeckId: string;
   result: MatchResult;
   turnOrder: TurnOrder;
-  screenshotOcrText: string;
   battleLog: string;
   note: string;
 };
 
-type DraftAnalysis = {
-  result: MatchResult;
-  turnOrder: TurnOrder;
-  playerName: string;
-  opponentName: string;
-  winnerName: string;
-  ocrText: string;
-  warnings: string[];
-};
-
-const STORAGE_KEY = 'ptcgl-winrate-tracker-v1';
+const STORAGE_KEY = 'ptcgl-winrate-tracker-v3-manual-only';
 const DEFAULT_PLAYER_NAME = 'toropoke0421';
+const DEFAULT_CREATED_AT = '2026-04-29T00:00:00.000Z';
 
-const defaultDecks: Deck[] = [
-  { id: crypto.randomUUID(), name: 'Brute Bonnet / Toxtricity', memo: 'Sample', createdAt: new Date().toISOString() },
-  { id: crypto.randomUUID(), name: 'Dragapult ex', memo: 'Sample', createdAt: new Date().toISOString() },
-  { id: crypto.randomUUID(), name: 'Fezandipiti ex / Ogerpon ex', memo: 'Sample', createdAt: new Date().toISOString() },
-  { id: crypto.randomUUID(), name: 'Other / Unknown', memo: '', createdAt: new Date().toISOString() },
+const defaultDeckNames = [
+  'Dragapult ex',
+  'Crustle Mysterious Rock Inn',
+  "Rocket's Mewtwo ex",
+  'Ogerpon Meganium',
+  'Festival Lead',
+  "Cynthia's Garchomp ex",
+  'Raging Bolt ex',
+  "N's Zoroark ex",
+  'Mega Lucario ex',
+  'Alakazam Powerful Hand',
+  'Ogerpon Box',
+  'Mega Starmie ex',
+  'Okidogi Adrena-Power',
+  'Tera Box',
+  "Rocket's Honchkrow",
+  "Marnie's Grimmsnarl ex",
+  "Lillie's Clefairy ex",
+  'Slowking Seek Inspiration',
+  'Mega Lopunny ex',
+  "Hop's Trevenant",
+  'Mega Absol Box',
+  'Archaludon ex',
+  "Ethan's Typhlosion",
+  'Flareon ex',
+  'Greninja ex',
+  'Hydrapple ex',
 ];
 
+const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+const defaultDecks: Deck[] = defaultDeckNames.map((name) => ({
+  id: slugify(name),
+  name,
+  memo: '',
+  createdAt: DEFAULT_CREATED_AT,
+}));
+
 const normalize = (value: string) => value.trim().replace(/\s+/g, ' ');
-
-function parseResultFromOcr(ocrText: string): MatchResult {
-  const text = ocrText.toUpperCase();
-  const victoryLike = /VICTORY|V1CTORY|VICT0RY|VICTORV/.test(text);
-  const defeatLike = /DEFEAT|DEF EAT|DEFE4T/.test(text);
-  if (victoryLike && !defeatLike) return 'win';
-  if (defeatLike && !victoryLike) return 'loss';
-  return 'unknown';
-}
-
-function parseBattleLog(log: string, fallbackPlayerName: string): Partial<DraftAnalysis> {
-  const warnings: string[] = [];
-  const lines = log.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const text = lines.join('\n');
-
-  let playerName = fallbackPlayerName;
-  const opponentCandidates = new Set<string>();
-  const handLines = lines.filter((line) => / drew 7 cards for the opening hand\./i.test(line));
-  const handNames = handLines.map((line) => line.replace(/ drew 7 cards for the opening hand\./i, '').trim());
-  if (handNames.length >= 2) {
-    const fallbackInLog = handNames.find((name) => name.toLowerCase() === fallbackPlayerName.toLowerCase());
-    playerName = fallbackInLog ?? fallbackPlayerName;
-    handNames.filter((name) => name !== playerName).forEach((name) => opponentCandidates.add(name));
-  }
-
-  const winnerMatch = text.match(/^(.+?) wins\.$/im) || text.match(/Opponent conceded\.\s*(.+?) wins\./i);
-  const winnerName = winnerMatch ? normalize(winnerMatch[1]) : '';
-
-  const decidedFirst = text.match(/^(.+?) decided to go first\.$/im);
-  const decidedSecond = text.match(/^(.+?) decided to go second\.$/im);
-  let turnOrder: TurnOrder = 'unknown';
-
-  if (decidedFirst) {
-    const starter = normalize(decidedFirst[1]);
-    if (starter.toLowerCase() === playerName.toLowerCase()) turnOrder = 'first';
-    else {
-      opponentCandidates.add(starter);
-      turnOrder = 'second';
-    }
-  } else if (decidedSecond) {
-    const secondPlayer = normalize(decidedSecond[1]);
-    if (secondPlayer.toLowerCase() === playerName.toLowerCase()) turnOrder = 'second';
-    else {
-      opponentCandidates.add(secondPlayer);
-      turnOrder = 'first';
-    }
-  } else {
-    warnings.push('バトルログから先攻・後攻を判断できませんでした。');
-  }
-
-  let result: MatchResult = 'unknown';
-  if (/You conceded/i.test(text)) result = 'loss';
-  if (winnerName) result = winnerName.toLowerCase() === playerName.toLowerCase() ? 'win' : 'loss';
-
-  const opponentName = Array.from(opponentCandidates)[0] ?? '';
-  if (!winnerName && !/You conceded/i.test(text)) warnings.push('バトルログから勝敗を判断できませんでした。スクリーンショット OCR または手動選択を使ってください。');
-
-  return { result, turnOrder, playerName, opponentName, winnerName, warnings };
-}
 
 function loadState(): { decks: Deck[]; matches: MatchRecord[]; playerName: string } {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -152,8 +113,12 @@ function buildStats(matches: MatchRecord[], decks: Deck[]) {
     return { wins, losses: items.length - wins, total: items.length, winRate: pct(wins, items.length) };
   };
 
-  const byMyDeck = decks.map((deck) => ({ label: deck.name, ...summarize(records.filter((match) => match.myDeckId === deck.id)) })).filter((row) => row.total > 0);
-  const byOpponentDeck = decks.map((deck) => ({ label: deck.name, ...summarize(records.filter((match) => match.opponentDeckId === deck.id)) })).filter((row) => row.total > 0);
+  const byMyDeck = decks
+    .map((deck) => ({ label: deck.name, ...summarize(records.filter((match) => match.myDeckId === deck.id)) }))
+    .filter((row) => row.total > 0);
+  const byOpponentDeck = decks
+    .map((deck) => ({ label: deck.name, ...summarize(records.filter((match) => match.opponentDeckId === deck.id)) }))
+    .filter((row) => row.total > 0);
 
   const matchupMap = new Map<string, MatchRecord[]>();
   records.forEach((match) => {
@@ -163,7 +128,7 @@ function buildStats(matches: MatchRecord[], decks: Deck[]) {
 
   const matchups = Array.from(matchupMap.entries())
     .map(([label, items]) => ({ label, ...summarize(items) }))
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => b.total - a.total || b.wins - a.wins);
 
   return { overall: summarize(records), byMyDeck, byOpponentDeck, matchups };
 }
@@ -174,16 +139,15 @@ function App() {
   const [decks, setDecks] = useState<Deck[]>(initial.decks);
   const [matches, setMatches] = useState<MatchRecord[]>(initial.matches);
   const [playerName, setPlayerName] = useState(initial.playerName);
+  const [opponentName, setOpponentName] = useState('');
   const [newDeckName, setNewDeckName] = useState('');
   const [newDeckMemo, setNewDeckMemo] = useState('');
   const [myDeckId, setMyDeckId] = useState(initial.decks[0]?.id ?? '');
-  const [opponentDeckId, setOpponentDeckId] = useState(initial.decks[1]?.id ?? initial.decks[0]?.id ?? '');
+  const [opponentDeckId, setOpponentDeckId] = useState(initial.decks[0]?.id ?? '');
   const [battleLog, setBattleLog] = useState('');
   const [note, setNote] = useState('');
-  const [analysis, setAnalysis] = useState<DraftAnalysis>({ result: 'unknown', turnOrder: 'unknown', playerName, opponentName: '', winnerName: '', ocrText: '', warnings: [] });
-  const [ocrStatus, setOcrStatus] = useState('');
-  const [previewUrl, setPreviewUrl] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [manualResult, setManualResult] = useState<MatchResult>('unknown');
+  const [manualTurnOrder, setManualTurnOrder] = useState<TurnOrder>('unknown');
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ decks, matches, playerName }));
@@ -191,89 +155,60 @@ function App() {
 
   const stats = useMemo(() => buildStats(matches, decks), [matches, decks]);
 
-  const runLogAnalysis = (value: string) => {
-    const parsed = parseBattleLog(value, playerName);
-    setAnalysis((prev) => {
-      const logResult = parsed.result ?? 'unknown';
-      const ocrResult = prev.result !== 'unknown' ? prev.result : 'unknown';
-      return {
-        ...prev,
-        ...parsed,
-        result: logResult !== 'unknown' ? logResult : ocrResult,
-        warnings: [...(parsed.warnings ?? [])],
-      } as DraftAnalysis;
-    });
-  };
-
-  const handleBattleLog = (value: string) => {
-    setBattleLog(value);
-    runLogAnalysis(value);
-  };
-
-  const handleScreenshot = async (file: File) => {
-    setPreviewUrl(URL.createObjectURL(file));
-    setOcrStatus('OCR 実行中... 初回は少し時間がかかります。');
-    try {
-      const worker = await createWorker('eng');
-      const result = await worker.recognize(file);
-      await worker.terminate();
-      const ocrText = result.data.text;
-      const ocrResult = parseResultFromOcr(ocrText);
-      setAnalysis((prev) => ({
-        ...prev,
-        result: ocrResult !== 'unknown' ? ocrResult : prev.result,
-        ocrText,
-        warnings: ocrResult === 'unknown' ? [...prev.warnings, 'スクリーンショット OCR から VICTORY / DEFEAT を判断できませんでした。'] : prev.warnings,
-      }));
-      setOcrStatus(ocrResult === 'unknown' ? 'OCR 完了: 勝敗は手動確認してください。' : `OCR 完了: ${resultLabel(ocrResult)} と判断しました。`);
-    } catch (error) {
-      setOcrStatus('OCR に失敗しました。手動で勝敗を選択してください。');
-      console.error(error);
-    }
-  };
-
   const addDeck = () => {
     const name = normalize(newDeckName);
     if (!name) return;
-    const deck = { id: crypto.randomUUID(), name, memo: newDeckMemo, createdAt: new Date().toISOString() };
+    const baseId = slugify(name) || `deck-${Date.now()}`;
+    const id = decks.some((deck) => deck.id === baseId) ? `${baseId}-${Date.now()}` : baseId;
+    const deck = { id, name, memo: newDeckMemo, createdAt: new Date().toISOString() };
     setDecks((prev) => [...prev, deck]);
     setNewDeckName('');
     setNewDeckMemo('');
   };
 
+  const resetDefaultDecks = () => {
+    setDecks(defaultDecks);
+    setMyDeckId(defaultDecks[0].id);
+    setOpponentDeckId(defaultDecks[0].id);
+  };
+
   const deleteDeck = (id: string) => {
     if (decks.length <= 1) return;
-    setDecks((prev) => prev.filter((deck) => deck.id !== id));
     const fallback = decks.find((deck) => deck.id !== id)?.id ?? '';
-    setMatches((prev) => prev.map((match) => ({ ...match, myDeckId: match.myDeckId === id ? fallback : match.myDeckId, opponentDeckId: match.opponentDeckId === id ? fallback : match.opponentDeckId })));
+    setDecks((prev) => prev.filter((deck) => deck.id !== id));
+    setMyDeckId((prev) => (prev === id ? fallback : prev));
+    setOpponentDeckId((prev) => (prev === id ? fallback : prev));
+    setMatches((prev) => prev.map((match) => ({
+      ...match,
+      myDeckId: match.myDeckId === id ? fallback : match.myDeckId,
+      opponentDeckId: match.opponentDeckId === id ? fallback : match.opponentDeckId,
+    })));
   };
 
   const saveMatch = () => {
     const record: MatchRecord = {
       id: crypto.randomUUID(),
       playedAt: new Date().toISOString(),
-      playerName: analysis.playerName || playerName,
-      opponentName: analysis.opponentName,
+      playerName: normalize(playerName) || DEFAULT_PLAYER_NAME,
+      opponentName: normalize(opponentName),
       myDeckId,
       opponentDeckId,
-      result: analysis.result,
-      turnOrder: analysis.turnOrder,
-      screenshotOcrText: analysis.ocrText,
+      result: manualResult,
+      turnOrder: manualTurnOrder,
       battleLog,
       note,
     };
     setMatches((prev) => [record, ...prev]);
+    setOpponentName('');
     setBattleLog('');
     setNote('');
-    setPreviewUrl('');
-    setOcrStatus('');
-    setAnalysis({ result: 'unknown', turnOrder: 'unknown', playerName, opponentName: '', winnerName: '', ocrText: '', warnings: [] });
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    setManualResult('unknown');
+    setManualTurnOrder('unknown');
     setTab('history');
   };
 
   const exportCsv = () => {
-    const header = ['playedAt', 'result', 'turnOrder', 'playerName', 'opponentName', 'myDeck', 'opponentDeck', 'note'];
+    const header = ['playedAt', 'result', 'turnOrder', 'playerName', 'opponentName', 'myDeck', 'opponentDeck', 'note', 'battleLog'];
     const rows = matches.map((match) => [
       match.playedAt,
       match.result,
@@ -283,6 +218,7 @@ function App() {
       deckName(decks, match.myDeckId),
       deckName(decks, match.opponentDeckId),
       match.note,
+      match.battleLog,
     ]);
     const csv = [header, ...rows].map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -300,7 +236,7 @@ function App() {
         <div>
           <p className="eyebrow">PTCGL Tracker</p>
           <h1>勝率計算アプリ</h1>
-          <p>リザルト画像とバトルログから勝敗・先攻後攻を自動判定し、デッキ別の勝率を記録します。</p>
+          <p>勝敗・先攻後攻を手動で入力し、デッキ別・マッチアップ別の勝率を記録します。</p>
         </div>
         <div className="heroStats">
           <strong>{stats.overall.winRate}</strong>
@@ -309,7 +245,7 @@ function App() {
       </header>
 
       <nav className="tabs">
-        <button className={tab === 'record' ? 'active' : ''} onClick={() => setTab('record')}><Camera size={18} /> 対戦を記録</button>
+        <button className={tab === 'record' ? 'active' : ''} onClick={() => setTab('record')}><CheckCircle2 size={18} /> 対戦を記録</button>
         <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}><History size={18} /> 対戦履歴</button>
         <button className={tab === 'decks' ? 'active' : ''} onClick={() => setTab('decks')}><Settings size={18} /> デッキ設定</button>
       </nav>
@@ -320,6 +256,8 @@ function App() {
             <h2>1. 基本設定</h2>
             <label>自分の PTCGL プレイヤー名</label>
             <input value={playerName} onChange={(event) => setPlayerName(event.target.value)} placeholder="toropoke0421" />
+            <label>相手の PTCGL プレイヤー名</label>
+            <input value={opponentName} onChange={(event) => setOpponentName(event.target.value)} placeholder="任意" />
             <div className="row">
               <div>
                 <label>自分のデッキ</label>
@@ -330,37 +268,36 @@ function App() {
                 <select value={opponentDeckId} onChange={(event) => setOpponentDeckId(event.target.value)}>{decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.name}</option>)}</select>
               </div>
             </div>
-
-            <h2>2. リザルト画像</h2>
-            <input ref={fileInputRef} type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && handleScreenshot(event.target.files[0])} />
-            {ocrStatus && <p className="status">{ocrStatus}</p>}
-            {previewUrl && <img className="preview" src={previewUrl} />}
           </section>
 
           <section className="card">
-            <h2>3. バトルログ</h2>
-            <textarea value={battleLog} onChange={(event) => handleBattleLog(event.target.value)} placeholder="Battle Log をここに貼り付け" />
-            <div className="analysisBox">
-              <div className={`resultPill ${analysis.result}`}>{analysis.result === 'win' ? <CheckCircle2 size={18} /> : analysis.result === 'loss' ? <XCircle size={18} /> : null}{resultLabel(analysis.result)}</div>
-              <div className="mini"><span>先攻後攻</span><strong>{turnOrderLabel(analysis.turnOrder)}</strong></div>
-              <div className="mini"><span>相手名</span><strong>{analysis.opponentName || '-'}</strong></div>
-              <div className="mini"><span>勝者</span><strong>{analysis.winnerName || '-'}</strong></div>
+            <h2>2. 勝敗・先攻後攻</h2>
+            <div className="manualControls full">
+              <div>
+                <label>勝敗</label>
+                <select value={manualResult} onChange={(event) => setManualResult(event.target.value as MatchResult)}>
+                  <option value="unknown">不明</option>
+                  <option value="win">勝ち</option>
+                  <option value="loss">負け</option>
+                </select>
+              </div>
+              <div>
+                <label>先攻・後攻</label>
+                <select value={manualTurnOrder} onChange={(event) => setManualTurnOrder(event.target.value as TurnOrder)}>
+                  <option value="unknown">不明</option>
+                  <option value="first">先攻</option>
+                  <option value="second">後攻</option>
+                </select>
+              </div>
             </div>
-            <div className="manualControls">
-              <label>勝敗を手動補正</label>
-              <select value={analysis.result} onChange={(event) => setAnalysis((prev) => ({ ...prev, result: event.target.value as MatchResult }))}>
-                <option value="unknown">不明</option>
-                <option value="win">勝ち</option>
-                <option value="loss">負け</option>
-              </select>
-              <label>先攻後攻を手動補正</label>
-              <select value={analysis.turnOrder} onChange={(event) => setAnalysis((prev) => ({ ...prev, turnOrder: event.target.value as TurnOrder }))}>
-                <option value="unknown">不明</option>
-                <option value="first">先攻</option>
-                <option value="second">後攻</option>
-              </select>
+            <div className="analysisBox compact">
+              <div className={`resultPill ${manualResult}`}>{manualResult === 'win' ? <CheckCircle2 size={18} /> : manualResult === 'loss' ? <XCircle size={18} /> : null}{resultLabel(manualResult)}</div>
+              <div className="mini"><span>先攻後攻</span><strong>{turnOrderLabel(manualTurnOrder)}</strong></div>
+              <div className="mini"><span>自分のデッキ</span><strong>{deckName(decks, myDeckId)}</strong></div>
+              <div className="mini"><span>相手のデッキ</span><strong>{deckName(decks, opponentDeckId)}</strong></div>
             </div>
-            {analysis.warnings.length > 0 && <div className="warnings">{analysis.warnings.map((warning, index) => <p key={`${warning}-${index}`}>・{warning}</p>)}</div>}
+            <label>バトルログ / メモ用テキスト</label>
+            <textarea value={battleLog} onChange={(event) => setBattleLog(event.target.value)} placeholder="任意。OCRや自動判定は行いません。あとから見返したい場合だけ貼り付けてください。" />
             <label>メモ</label>
             <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="事故、プレミ、相手の型など" />
             <button className="primary" onClick={saveMatch}>記録する</button>
@@ -416,7 +353,10 @@ function App() {
       {tab === 'decks' && (
         <main className="grid two">
           <section className="card">
-            <h2>デッキ追加</h2>
+            <div className="sectionHeader">
+              <h2>デッキ追加</h2>
+              <button onClick={resetDefaultDecks}>デフォルトに戻す</button>
+            </div>
             <label>デッキ名</label>
             <input value={newDeckName} onChange={(event) => setNewDeckName(event.target.value)} placeholder="例: Dragapult ex" />
             <label>メモ</label>

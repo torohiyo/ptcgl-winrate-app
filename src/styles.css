@@ -69,3 +69,6 @@ th { color: #93a4ca; font-size: 12px; text-transform: uppercase; letter-spacing:
   .tabs { overflow-x: auto; }
   .tabs button { white-space: nowrap; }
 }
+.hint { color: #93a4ca; font-size: 13px; line-height: 1.6; margin: 10px 0 0; }
+.analysisBox.compact { grid-template-columns: 1.1fr 1fr 1fr 1fr; }
+.manualControls.full { grid-template-columns: 1fr 1fr; }
