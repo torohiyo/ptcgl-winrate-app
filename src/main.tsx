@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   Check,
+  ClipboardPaste,
   Download,
   Grid3X3,
   History,
@@ -518,16 +521,44 @@ async function persistMatchToCloud(match: MatchRecord) {
     prefer: "return=minimal",
   });
 }
+
+async function updateMatchToCloud(match: MatchRecord) {
+  if (!isCloudEnabled) return;
+  await supabaseRequest("ptcgl_matches", {
+    method: "PATCH",
+    query: `id=eq.${encodeURIComponent(match.id)}`,
+    body: matchToCloudRow(match),
+    prefer: "return=minimal",
+  });
+}
+
+async function deleteMatchFromCloud(matchId: string) {
+  if (!isCloudEnabled) return;
+  await supabaseRequest("ptcgl_matches", {
+    method: "DELETE",
+    query: `id=eq.${encodeURIComponent(matchId)}`,
+    prefer: "return=minimal",
+  });
+}
+
 function parseTurnOrderFromBattleLog(
   battleLog: string,
   playerName: string,
 ): TurnOrder {
   const player = normalize(playerName).toLowerCase();
-  const decidedLine = battleLog.match(/^(.+?) decided to go first\./im);
-  if (!decidedLine || !player) return "unknown";
-  return normalize(decidedLine[1]).toLowerCase() === player
-    ? "first"
-    : "second";
+  if (!player) return "second";
+
+  const goFirstMatch = battleLog.match(/^(.+?) decided to go first\./im);
+  if (goFirstMatch) {
+    return normalize(goFirstMatch[1]).toLowerCase() === player ? "first" : "second";
+  }
+
+  const goSecondMatch = battleLog.match(/^(.+?) decided to go second\./im);
+  if (goSecondMatch) {
+    return normalize(goSecondMatch[1]).toLowerCase() !== player ? "first" : "second";
+  }
+
+  return "second";
 }
 
 function parseResultFromBattleLog(
@@ -535,9 +566,10 @@ function parseResultFromBattleLog(
   playerName: string,
 ): MatchResult {
   const player = normalize(playerName).toLowerCase();
+  if (!player) return "loss";
   const winLine = battleLog.match(/(?:^|\n)\s*(.+?) wins\./im);
-  if (!winLine || !player) return "unknown";
-  return normalize(winLine[1]).toLowerCase() === player ? "win" : "loss";
+  if (winLine && normalize(winLine[1]).toLowerCase() === player) return "win";
+  return "loss";
 }
 
 function summarize(matches: MatchRecord[]) {
@@ -627,6 +659,7 @@ function App() {
   const [draftDeck, setDraftDeck] = useState<DraftDeck | null>(null);
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
   const [newDeckName, setNewDeckName] = useState("");
+  const [editingMatch, setEditingMatch] = useState<MatchRecord | null>(null);
 
   const myDeck = getDeck(decks, myDeckId);
   const opponentDeck = getDeck(decks, opponentDeckId);
@@ -713,24 +746,20 @@ function App() {
       setOpponentVariantId("");
   }, [decks, opponentDeckId, opponentVariantId]);
 
-  const applyLogResult = () => {
-    const parsed = parseResultFromBattleLog(battleLog, playerName);
-    setResult(parsed);
-    setMessage(
-      parsed === "unknown"
-        ? "バトルログから勝敗を判定できませんでした。"
-        : `バトルログから${resultLabel(parsed)}と判定しました。`,
-    );
-  };
-
-  const applyLogTurnOrder = () => {
-    const parsed = parseTurnOrderFromBattleLog(battleLog, playerName);
-    setTurnOrder(parsed);
-    setMessage(
-      parsed === "unknown"
-        ? "バトルログから先攻後攻を判定できませんでした。"
-        : `バトルログから${turnOrderLabel(parsed)}と判定しました。`,
-    );
+  const pasteLog = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const parsedTurn = parseTurnOrderFromBattleLog(text, playerName);
+      const parsedResult = parseResultFromBattleLog(text, playerName);
+      setBattleLog(text);
+      setTurnOrder(parsedTurn);
+      setResult(parsedResult);
+      setMessage(
+        `${turnOrderLabel(parsedTurn)} / ${resultLabel(parsedResult)} と判定しました。`,
+      );
+    } catch {
+      setMessage("クリップボードの読み取りに失敗しました。");
+    }
   };
 
   const saveMatch = async () => {
@@ -776,6 +805,34 @@ function App() {
     setTurnOrder("first");
     setMessage("登録しました。");
     setTab("matrix");
+  };
+
+  const editMatch = async (updated: MatchRecord) => {
+    setMatches((prev) =>
+      prev.map((m) => (m.id === updated.id ? updated : m)),
+    );
+    setEditingMatch(null);
+    try {
+      await updateMatchToCloud(updated);
+      if (isCloudEnabled) setSyncMessage("試合記録をSupabaseに更新しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("試合記録の更新に失敗しました。ローカルには反映されています。");
+    }
+  };
+
+  const deleteMatch = async (matchId: string) => {
+    setMatches((prev) => prev.filter((m) => m.id !== matchId));
+    if (expandedMatchId === matchId) setExpandedMatchId(null);
+    try {
+      await deleteMatchFromCloud(matchId);
+      if (isCloudEnabled) setSyncMessage("試合記録をSupabaseから削除しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("試合記録の削除に失敗しました。ローカルには反映されています。");
+    }
   };
 
   const openDetail = (myId: string, oppId: string) => {
@@ -848,6 +905,15 @@ function App() {
         i === index ? { ...variant, ...patch } : variant,
       ),
     });
+  };
+
+  const moveDraftVariant = (index: number, direction: "up" | "down") => {
+    if (!draftDeck) return;
+    const variants = [...draftDeck.variants];
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= variants.length) return;
+    [variants[index], variants[targetIndex]] = [variants[targetIndex], variants[index]];
+    setDraftDeck({ ...draftDeck, variants });
   };
 
   const deleteDraftVariant = (index: number) => {
@@ -1032,30 +1098,14 @@ function App() {
           opponentVariantId={opponentVariantId}
           setOpponentVariantId={setOpponentVariantId}
           result={result}
-          setResult={(value) => {
-            if (value === "unknown") applyLogResult();
-            else {
-              setResult(value);
-              setMessage("");
-            }
-          }}
           turnOrder={turnOrder}
-          setTurnOrder={(value) => {
-            if (value === "unknown") applyLogTurnOrder();
-            else {
-              setTurnOrder(value);
-              setMessage("");
-            }
-          }}
           battleLog={battleLog}
-          setBattleLog={setBattleLog}
           note={note}
           setNote={setNote}
           myDeck={myDeck}
           opponentDeck={opponentDeck}
           message={message}
-          applyLogResult={applyLogResult}
-          applyLogTurnOrder={applyLogTurnOrder}
+          pasteLog={pasteLog}
           saveMatch={saveMatch}
         />
       )}
@@ -1072,6 +1122,8 @@ function App() {
           goBack={() => setTab("matrix")}
           expandedMatchId={expandedMatchId}
           setExpandedMatchId={setExpandedMatchId}
+          onEditMatch={setEditingMatch}
+          onDeleteMatch={deleteMatch}
         />
       )}
 
@@ -1082,6 +1134,8 @@ function App() {
           expandedMatchId={expandedMatchId}
           setExpandedMatchId={setExpandedMatchId}
           exportCsv={exportCsv}
+          onEditMatch={setEditingMatch}
+          onDeleteMatch={deleteMatch}
         />
       )}
 
@@ -1108,7 +1162,18 @@ function App() {
           save={saveDeckDraft}
           addVariant={addVariantToDraft}
           updateVariant={updateDraftVariant}
+          moveVariant={moveDraftVariant}
           deleteVariant={deleteDraftVariant}
+        />
+      )}
+
+      {editingMatch && (
+        <MatchEditModal
+          match={editingMatch}
+          decks={decks}
+          playerName={playerName}
+          onSave={editMatch}
+          onClose={() => setEditingMatch(null)}
         />
       )}
     </div>
@@ -1131,18 +1196,14 @@ function RecordPage(props: {
   opponentVariantId: string;
   setOpponentVariantId: (value: string) => void;
   result: MatchResult;
-  setResult: (value: MatchResult) => void;
   turnOrder: TurnOrder;
-  setTurnOrder: (value: TurnOrder) => void;
   battleLog: string;
-  setBattleLog: (value: string) => void;
   note: string;
   setNote: (value: string) => void;
   myDeck: Deck;
   opponentDeck: Deck;
   message: string;
-  applyLogResult: () => void;
-  applyLogTurnOrder: () => void;
+  pasteLog: () => void;
   saveMatch: () => void;
 }) {
   return (
@@ -1150,7 +1211,7 @@ function RecordPage(props: {
       <section className="card fullWidth">
         <div className="sectionTitle">
           <h2>試合結果登録</h2>
-          <span>勝利・先攻が初期値です</span>
+          <span>ログを貼り付けると勝敗・先後が自動判定されます</span>
         </div>
         <div className="formGrid twoColumns">
           <label>
@@ -1169,37 +1230,21 @@ function RecordPage(props: {
               placeholder="Opponent"
             />
           </label>
-          <label>
-            勝敗
-            <select
-              value={props.result}
-              onChange={(e) => props.setResult(e.target.value as MatchResult)}
-            >
-              <option value="win">勝利</option>
-              <option value="loss">敗北</option>
-              <option value="unknown">不明</option>
-            </select>
-          </label>
-          <label>
-            先攻・後攻
-            <select
-              value={props.turnOrder}
-              onChange={(e) => props.setTurnOrder(e.target.value as TurnOrder)}
-            >
-              <option value="first">先攻</option>
-              <option value="second">後攻</option>
-              <option value="unknown">不明</option>
-            </select>
-          </label>
         </div>
         <div className="miniActions">
-          <button type="button" onClick={props.applyLogResult}>
-            ログから勝敗判定
-          </button>
-          <button type="button" onClick={props.applyLogTurnOrder}>
-            ログから先後判定
+          <button type="button" onClick={props.pasteLog}>
+            <ClipboardPaste size={14} />
+            バトルログを貼り付け
           </button>
         </div>
+        {props.battleLog && (
+          <div className="logParsedBadges">
+            <span className={`resultBadge ${props.result}`}>
+              {resultLabel(props.result)}
+            </span>
+            <span className="turnBadge">{turnOrderLabel(props.turnOrder)}</span>
+          </div>
+        )}
         {props.message && <p className="message">{props.message}</p>}
       </section>
 
@@ -1234,14 +1279,6 @@ function RecordPage(props: {
       </section>
 
       <section className="card fullWidth">
-        <label>
-          バトルログ
-          <textarea
-            value={props.battleLog}
-            onChange={(e) => props.setBattleLog(e.target.value)}
-            placeholder="バトルログを貼り付けると、勝敗・先攻後攻を判定できます"
-          />
-        </label>
         <label>
           メモ
           <input
@@ -1412,6 +1449,8 @@ function DetailPage({
   goBack,
   expandedMatchId,
   setExpandedMatchId,
+  onEditMatch,
+  onDeleteMatch,
 }: {
   decks: Deck[];
   matches: MatchRecord[];
@@ -1419,6 +1458,8 @@ function DetailPage({
   goBack: () => void;
   expandedMatchId: string | null;
   setExpandedMatchId: (id: string | null) => void;
+  onEditMatch: (match: MatchRecord) => void;
+  onDeleteMatch: (matchId: string) => void;
 }) {
   const myDeck = getDeck(decks, selected.myDeckId);
   const opponentDeck = getDeck(decks, selected.opponentDeckId);
@@ -1511,6 +1552,8 @@ function DetailPage({
           matches={targetMatches}
           expandedMatchId={expandedMatchId}
           setExpandedMatchId={setExpandedMatchId}
+          onEditMatch={onEditMatch}
+          onDeleteMatch={onDeleteMatch}
         />
       </section>
     </main>
@@ -1523,12 +1566,16 @@ function HistoryPage({
   expandedMatchId,
   setExpandedMatchId,
   exportCsv,
+  onEditMatch,
+  onDeleteMatch,
 }: {
   decks: Deck[];
   matches: MatchRecord[];
   expandedMatchId: string | null;
   setExpandedMatchId: (id: string | null) => void;
   exportCsv: () => void;
+  onEditMatch: (match: MatchRecord) => void;
+  onDeleteMatch: (matchId: string) => void;
 }) {
   return (
     <main className="card">
@@ -1544,6 +1591,8 @@ function HistoryPage({
         matches={matches}
         expandedMatchId={expandedMatchId}
         setExpandedMatchId={setExpandedMatchId}
+        onEditMatch={onEditMatch}
+        onDeleteMatch={onDeleteMatch}
       />
     </main>
   );
@@ -1554,11 +1603,15 @@ function HistoryList({
   matches,
   expandedMatchId,
   setExpandedMatchId,
+  onEditMatch,
+  onDeleteMatch,
 }: {
   decks: Deck[];
   matches: MatchRecord[];
   expandedMatchId: string | null;
   setExpandedMatchId: (id: string | null) => void;
+  onEditMatch: (match: MatchRecord) => void;
+  onDeleteMatch: (matchId: string) => void;
 }) {
   if (!matches.length)
     return <p className="empty">まだ該当する試合はありません。</p>;
@@ -1585,6 +1638,31 @@ function HistoryList({
                 <strong>{resultLabel(match.result)}</strong>
                 <span>{turnOrderLabel(match.turnOrder)}</span>
                 <time>{new Date(match.playedAt).toLocaleString("ja-JP")}</time>
+                <div
+                  className="historyActions"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="historyActionBtn"
+                    aria-label="編集"
+                    onClick={() => onEditMatch(match)}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="historyActionBtn danger"
+                    aria-label="削除"
+                    onClick={() => {
+                      if (window.confirm("この試合記録を削除しますか？")) {
+                        onDeleteMatch(match.id);
+                      }
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
               <p>
                 {myDeck.name}
@@ -1704,6 +1782,7 @@ function DeckEditorModal({
   save,
   addVariant,
   updateVariant,
+  moveVariant,
   deleteVariant,
 }: {
   draft: DraftDeck;
@@ -1712,6 +1791,7 @@ function DeckEditorModal({
   save: () => void;
   addVariant: () => void;
   updateVariant: (index: number, patch: Partial<DeckVariant>) => void;
+  moveVariant: (index: number, direction: "up" | "down") => void;
   deleteVariant: (index: number) => void;
 }) {
   return (
@@ -1790,6 +1870,24 @@ function DeckEditorModal({
         <div className="variantEditorList">
           {draft.variants.map((variant, index) => (
             <div key={variant.id} className="variantEditRow">
+              <div className="variantOrderBtns">
+                <button
+                  type="button"
+                  aria-label="上へ"
+                  disabled={index === 0}
+                  onClick={() => moveVariant(index, "up")}
+                >
+                  <ArrowUp size={13} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="下へ"
+                  disabled={index === draft.variants.length - 1}
+                  onClick={() => moveVariant(index, "down")}
+                >
+                  <ArrowDown size={13} />
+                </button>
+              </div>
               <input
                 value={variant.name}
                 onChange={(e) => updateVariant(index, { name: e.target.value })}
@@ -1809,6 +1907,174 @@ function DeckEditorModal({
           ))}
         </div>
         <button className="primary" type="button" onClick={save}>
+          保存
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function MatchEditModal({
+  match,
+  decks,
+  playerName,
+  onSave,
+  onClose,
+}: {
+  match: MatchRecord;
+  decks: Deck[];
+  playerName: string;
+  onSave: (match: MatchRecord) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState<MatchRecord>({ ...match });
+  const [pasteMessage, setPasteMessage] = useState("");
+
+  const myDeck = getDeck(decks, draft.myDeckId);
+  const opponentDeck = getDeck(decks, draft.opponentDeckId);
+  const myDeckOptions = decks.filter((d) => d.isMyDeck).length
+    ? decks.filter((d) => d.isMyDeck)
+    : decks;
+
+  const playedAtLocal = draft.playedAt
+    ? new Date(new Date(draft.playedAt).getTime() - new Date(draft.playedAt).getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16)
+    : "";
+
+  const pasteBattleLog = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const parsedTurn = parseTurnOrderFromBattleLog(text, playerName);
+      const parsedResult = parseResultFromBattleLog(text, playerName);
+      setDraft((prev) => ({
+        ...prev,
+        battleLog: text,
+        turnOrder: parsedTurn,
+        result: parsedResult,
+      }));
+      setPasteMessage(
+        `${turnOrderLabel(parsedTurn)} / ${resultLabel(parsedResult)} と判定しました。`,
+      );
+    } catch {
+      setPasteMessage("クリップボードの読み取りに失敗しました。");
+    }
+  };
+
+  return (
+    <div className="modalBackdrop" onClick={onClose}>
+      <section className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="sectionTitle">
+          <h2>試合記録を編集</h2>
+          <button className="smallButton" type="button" onClick={onClose}>
+            閉じる
+          </button>
+        </div>
+
+        <div className="formGrid twoColumns">
+          <label>
+            日時
+            <input
+              type="datetime-local"
+              value={playedAtLocal}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  playedAt: e.target.value
+                    ? new Date(e.target.value).toISOString()
+                    : draft.playedAt,
+                })
+              }
+            />
+          </label>
+          <label>
+            相手プレイヤー名
+            <input
+              value={draft.opponentName}
+              onChange={(e) =>
+                setDraft({ ...draft, opponentName: e.target.value })
+              }
+            />
+          </label>
+          <label>
+            勝敗
+            <select
+              value={draft.result}
+              onChange={(e) =>
+                setDraft({ ...draft, result: e.target.value as MatchResult })
+              }
+            >
+              <option value="win">勝利</option>
+              <option value="loss">敗北</option>
+              <option value="unknown">不明</option>
+            </select>
+          </label>
+          <label>
+            先攻・後攻
+            <select
+              value={draft.turnOrder}
+              onChange={(e) =>
+                setDraft({ ...draft, turnOrder: e.target.value as TurnOrder })
+              }
+            >
+              <option value="first">先攻</option>
+              <option value="second">後攻</option>
+              <option value="unknown">不明</option>
+            </select>
+          </label>
+        </div>
+
+        <h3>マイデッキ</h3>
+        <DeckSelect
+          decks={myDeckOptions}
+          value={draft.myDeckId}
+          onChange={(id) => setDraft({ ...draft, myDeckId: id, myVariantId: "" })}
+        />
+        <VariantSelect
+          deck={myDeck}
+          value={draft.myVariantId || ""}
+          onChange={(id) => setDraft({ ...draft, myVariantId: id })}
+          label="自分の型"
+        />
+
+        <h3>相手デッキ</h3>
+        <DeckSelect
+          decks={decks}
+          value={draft.opponentDeckId}
+          onChange={(id) =>
+            setDraft({ ...draft, opponentDeckId: id, opponentVariantId: "" })
+          }
+        />
+        <VariantSelect
+          deck={opponentDeck}
+          value={draft.opponentVariantId || ""}
+          onChange={(id) => setDraft({ ...draft, opponentVariantId: id })}
+          label="相手の型"
+        />
+
+        <div className="formGrid">
+          <label>
+            メモ
+            <input
+              value={draft.note}
+              onChange={(e) => setDraft({ ...draft, note: e.target.value })}
+            />
+          </label>
+        </div>
+
+        <div className="variantEditorTitle">
+          <h3>バトルログ</h3>
+          <button type="button" onClick={pasteBattleLog}>
+            <ClipboardPaste size={13} />
+            貼り付け
+          </button>
+        </div>
+        {pasteMessage && <p className="message">{pasteMessage}</p>}
+        {draft.battleLog && (
+          <pre className="battleLogView">{draft.battleLog}</pre>
+        )}
+
+        <button className="primary" type="button" onClick={() => onSave(draft)}>
           保存
         </button>
       </section>
