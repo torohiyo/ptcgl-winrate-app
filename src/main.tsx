@@ -567,7 +567,10 @@ function parseResultFromBattleLog(
 ): MatchResult {
   const player = normalize(playerName).toLowerCase();
   if (!player) return "loss";
-  return battleLog.toLowerCase().includes(`${player} wins.`) ? "win" : "loss";
+  const won = battleLog.toLowerCase().split("\n").some((line) =>
+    line.trimEnd().endsWith(`${player} wins.`),
+  );
+  return won ? "win" : "loss";
 }
 
 function summarize(matches: MatchRecord[]) {
