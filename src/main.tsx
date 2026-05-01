@@ -1098,7 +1098,9 @@ function App() {
           opponentVariantId={opponentVariantId}
           setOpponentVariantId={setOpponentVariantId}
           result={result}
+          setResult={setResult}
           turnOrder={turnOrder}
+          setTurnOrder={setTurnOrder}
           battleLog={battleLog}
           note={note}
           setNote={setNote}
@@ -1196,7 +1198,9 @@ function RecordPage(props: {
   opponentVariantId: string;
   setOpponentVariantId: (value: string) => void;
   result: MatchResult;
+  setResult: (value: MatchResult) => void;
   turnOrder: TurnOrder;
+  setTurnOrder: (value: TurnOrder) => void;
   battleLog: string;
   note: string;
   setNote: (value: string) => void;
@@ -1211,7 +1215,7 @@ function RecordPage(props: {
       <section className="card fullWidth">
         <div className="sectionTitle">
           <h2>試合結果登録</h2>
-          <span>ログを貼り付けると勝敗・先後が自動判定されます</span>
+          <span>ログ貼り付けで先後・勝敗を自動判定</span>
         </div>
         <div className="formGrid twoColumns">
           <label>
@@ -1230,21 +1234,35 @@ function RecordPage(props: {
               placeholder="Opponent"
             />
           </label>
+          <label>
+            勝敗
+            <select
+              value={props.result}
+              onChange={(e) => props.setResult(e.target.value as MatchResult)}
+            >
+              <option value="win">勝利</option>
+              <option value="loss">敗北</option>
+              <option value="unknown">不明</option>
+            </select>
+          </label>
+          <label>
+            先攻・後攻
+            <select
+              value={props.turnOrder}
+              onChange={(e) => props.setTurnOrder(e.target.value as TurnOrder)}
+            >
+              <option value="first">先攻</option>
+              <option value="second">後攻</option>
+              <option value="unknown">不明</option>
+            </select>
+          </label>
         </div>
         <div className="miniActions">
           <button type="button" onClick={props.pasteLog}>
             <ClipboardPaste size={14} />
-            バトルログを貼り付け
+            バトルログを貼り付け（自動判定）
           </button>
         </div>
-        {props.battleLog && (
-          <div className="logParsedBadges">
-            <span className={`resultBadge ${props.result}`}>
-              {resultLabel(props.result)}
-            </span>
-            <span className="turnBadge">{turnOrderLabel(props.turnOrder)}</span>
-          </div>
-        )}
         {props.message && <p className="message">{props.message}</p>}
       </section>
 
