@@ -1079,6 +1079,7 @@ function App() {
       {tab === "record" && (
         <RecordPage
           decks={decks}
+          matches={matches}
           myDeckOptions={myDeckOptions.length ? myDeckOptions : decks}
           playerName={playerName}
           setPlayerName={setPlayerName}
@@ -1185,6 +1186,7 @@ function App() {
 
 function RecordPage(props: {
   decks: Deck[];
+  matches: MatchRecord[];
   myDeckOptions: Deck[];
   playerName: string;
   setPlayerName: (value: string) => void;
@@ -1310,7 +1312,62 @@ function RecordPage(props: {
           この試合を登録
         </button>
       </section>
+
+      <MatchupNotes
+        matches={props.matches}
+        myDeckId={props.myDeckId}
+        opponentDeckId={props.opponentDeckId}
+        myDeck={props.myDeck}
+        opponentDeck={props.opponentDeck}
+      />
     </main>
+  );
+}
+
+function MatchupNotes({
+  matches,
+  myDeckId,
+  opponentDeckId,
+  myDeck,
+  opponentDeck,
+}: {
+  matches: MatchRecord[];
+  myDeckId: string;
+  opponentDeckId: string;
+  myDeck: Deck;
+  opponentDeck: Deck;
+}) {
+  const notes = matches.filter(
+    (m) =>
+      m.myDeckId === myDeckId &&
+      m.opponentDeckId === opponentDeckId &&
+      m.note.trim(),
+  );
+  if (!notes.length) return null;
+  return (
+    <section className="card fullWidth">
+      <div className="sectionTitle">
+        <h2>このマッチアップの過去メモ</h2>
+        <span>
+          {myDeck.name} vs {opponentDeck.name}
+        </span>
+      </div>
+      <div className="historyList">
+        {notes.map((m) => (
+          <div key={m.id} className="historyItem">
+            <div className={`resultDot ${m.result}`} />
+            <div className="historyBody">
+              <div className="historyLine">
+                <strong>{resultLabel(m.result)}</strong>
+                <span>{turnOrderLabel(m.turnOrder)}</span>
+                <time>{new Date(m.playedAt).toLocaleString("ja-JP")}</time>
+              </div>
+              <p className="note">{m.note}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
