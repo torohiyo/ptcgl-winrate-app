@@ -327,3 +327,67 @@
   .replayPlayback > .replayCtrlBtn{height:38px}
   .replayPlayback > .replayCtrlBtn.primary{height:42px}
 }
+
+/* v19.5 mobile: aggressively shrink board cards (PTCG Live-like compact size) */
+.replaySlot{min-width:0}
+@media(max-width:480px){
+  .replayBoard{padding:6px;gap:5px}
+  .replaySide{padding:5px;gap:5px;border-radius:8px}
+
+  /* bench: fixed 5x ~50px columns, centered (no longer 1fr stretching) */
+  .replayBench{grid-template-columns:repeat(5,50px);justify-content:center;gap:3px}
+  .replaySlot.bench{font-size:8px}
+  .replaySlot.bench.empty{font-size:8px}
+
+  /* active: smaller too */
+  .replaySlot.active{width:72px}
+  .replayActiveRow{padding:2px 0}
+
+  /* card overlays scaled to small cards */
+  .replayPokemonName{font-size:6.5px;left:2px;right:2px;top:2px}
+  .replaySlot.active .replayPokemonName{font-size:7.5px;left:3px;right:3px;top:3px}
+  .replayDmg{font-size:7.5px;padding:0 3px;border-width:1.2px}
+  .replayEvoTag{font-size:6.5px;padding:1px 2.5px;border-radius:4px}
+
+  /* energy cards: smaller, less peek */
+  .replayEnergyCard{width:10px;height:13px;margin-left:-2px;font-size:7px;padding-bottom:0;border-width:1.2px}
+  .replaySlot.active .replayEnergyCard{width:13px;height:17px;font-size:9px;padding-bottom:1px;border-width:1.3px}
+  .replayEnergyStack{bottom:-6px}
+  .replaySlot.active .replayEnergyStack{bottom:-9px}
+
+  /* opponent hand backs: tiny */
+  .replayCardBack{width:16px;height:23px;margin-left:-6px;border-width:1.2px}
+  .replayOpponentHand{min-height:26px;padding:2px 0}
+
+  /* counts pill: more compact */
+  .replayCount{font-size:8.5px;padding:1px 5px;gap:2px}
+  .replayCount b{font-size:9.5px}
+  .replaySideInfo{gap:5px}
+  .replaySideName{font-size:10.5px}
+  .replayYouTag{font-size:7.5px;padding:0 4px}
+
+  /* stadium: very compact */
+  .replayStadium{padding:3px 6px;gap:5px;min-height:36px}
+  .replayStadiumImg{width:26px}
+  .replayStadiumMeta b{font-size:9px}
+  .replayStadiumMeta span{font-size:7.5px}
+  .replayStadiumEmpty{font-size:8.5px}
+
+  /* self hand: smaller cards */
+  .replayHandZone{padding:5px}
+  .replayHandTitle{font-size:9px;margin-bottom:3px}
+  .replayHandHint{font-size:8px}
+  .replayHandCard{width:34px;border-width:1.2px;border-radius:4px}
+  .replayHandLabel{font-size:5.5px}
+
+  /* current event row: leaner */
+  .replayCurrent{padding:5px 8px;min-height:38px;gap:6px}
+  .replayCurrentIcon{width:22px;height:22px;font-size:10px;border-radius:6px}
+  .replayCurrentText strong{font-size:10.5px}
+  .replayCurrentText small{font-size:8.5px}
+
+  /* header: leaner */
+  .replayHeader{padding:5px 8px;gap:5px}
+  .replayHeaderMain h2{font-size:12px}
+  .replayMeta{font-size:9px}
+}
