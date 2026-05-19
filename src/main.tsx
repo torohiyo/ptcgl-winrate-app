@@ -10,11 +10,13 @@ import {
   Grid3X3,
   History,
   Pencil,
+  PlayCircle,
   Plus,
   Settings,
   Star,
   Trash2,
 } from "lucide-react";
+import ReplayModal from "./replay/ReplayModal";
 import "./styles.css";
 
 type MatchResult = "win" | "loss" | "unknown";
@@ -714,6 +716,9 @@ function App() {
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
   const [newDeckName, setNewDeckName] = useState("");
   const [editingMatch, setEditingMatch] = useState<MatchRecord | null>(null);
+  const [replayingMatch, setReplayingMatch] = useState<MatchRecord | null>(
+    null,
+  );
   const [lastMyVariantByDeck, setLastMyVariantByDeck] = useState<
     Record<string, string>
   >(initial.lastMyVariantByDeck);
@@ -1197,6 +1202,7 @@ function App() {
           setExpandedMatchId={setExpandedMatchId}
           onEditMatch={setEditingMatch}
           onDeleteMatch={deleteMatch}
+          onReplayMatch={setReplayingMatch}
         />
       )}
 
@@ -1209,6 +1215,7 @@ function App() {
           exportCsv={exportCsv}
           onEditMatch={setEditingMatch}
           onDeleteMatch={deleteMatch}
+          onReplayMatch={setReplayingMatch}
         />
       )}
 
@@ -1247,6 +1254,20 @@ function App() {
           playerName={playerName}
           onSave={editMatch}
           onClose={() => setEditingMatch(null)}
+        />
+      )}
+
+      {replayingMatch && (
+        <ReplayModal
+          match={{
+            id: replayingMatch.id,
+            battleLog: replayingMatch.battleLog,
+            playerName: replayingMatch.playerName,
+            opponentName: replayingMatch.opponentName,
+            playedAt: replayingMatch.playedAt,
+            result: replayingMatch.result,
+          }}
+          onClose={() => setReplayingMatch(null)}
         />
       )}
     </div>
@@ -1606,6 +1627,7 @@ function DetailPage({
   setExpandedMatchId,
   onEditMatch,
   onDeleteMatch,
+  onReplayMatch,
 }: {
   decks: Deck[];
   matches: MatchRecord[];
@@ -1615,6 +1637,7 @@ function DetailPage({
   setExpandedMatchId: (id: string | null) => void;
   onEditMatch: (match: MatchRecord) => void;
   onDeleteMatch: (matchId: string) => void;
+  onReplayMatch: (match: MatchRecord) => void;
 }) {
   const myDeck = getDeck(decks, selected.myDeckId);
   const opponentDeck = getDeck(decks, selected.opponentDeckId);
@@ -1709,6 +1732,7 @@ function DetailPage({
           setExpandedMatchId={setExpandedMatchId}
           onEditMatch={onEditMatch}
           onDeleteMatch={onDeleteMatch}
+          onReplayMatch={onReplayMatch}
         />
       </section>
     </main>
@@ -1793,6 +1817,7 @@ function HistoryPage({
   exportCsv,
   onEditMatch,
   onDeleteMatch,
+  onReplayMatch,
 }: {
   decks: Deck[];
   matches: MatchRecord[];
@@ -1801,6 +1826,7 @@ function HistoryPage({
   exportCsv: (records?: MatchRecord[]) => void;
   onEditMatch: (match: MatchRecord) => void;
   onDeleteMatch: (matchId: string) => void;
+  onReplayMatch: (match: MatchRecord) => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState<HistoryFilter>(emptyHistoryFilter);
@@ -1849,6 +1875,7 @@ function HistoryPage({
         setExpandedMatchId={setExpandedMatchId}
         onEditMatch={onEditMatch}
         onDeleteMatch={onDeleteMatch}
+        onReplayMatch={onReplayMatch}
       />
     </main>
   );
@@ -2014,6 +2041,7 @@ function HistoryList({
   setExpandedMatchId,
   onEditMatch,
   onDeleteMatch,
+  onReplayMatch,
 }: {
   decks: Deck[];
   matches: MatchRecord[];
@@ -2021,6 +2049,7 @@ function HistoryList({
   setExpandedMatchId: (id: string | null) => void;
   onEditMatch: (match: MatchRecord) => void;
   onDeleteMatch: (matchId: string) => void;
+  onReplayMatch: (match: MatchRecord) => void;
 }) {
   if (!matches.length)
     return <p className="empty">まだ該当する試合はありません。</p>;
@@ -2051,6 +2080,16 @@ function HistoryList({
                   className="historyActions"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <button
+                    type="button"
+                    className="historyActionBtn replay"
+                    aria-label="リプレイ"
+                    title="バトルログからリプレイを開く"
+                    disabled={!match.battleLog}
+                    onClick={() => onReplayMatch(match)}
+                  >
+                    <PlayCircle size={13} />
+                  </button>
                   <button
                     type="button"
                     className="historyActionBtn"

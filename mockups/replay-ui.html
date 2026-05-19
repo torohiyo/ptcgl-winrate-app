@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1280" />
+<title>PTCGL Replay — UI Mockup</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#edf2ff;background:linear-gradient(135deg,#071225,#1b1125);min-height:100vh;padding:18px}
+  .app{max-width:1320px;margin:0 auto;display:grid;gap:14px}
+
+  /* ── Header ─────────────────────────────────────── */
+  .header{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 16px;border:1px solid rgba(255,255,255,.1);background:rgba(8,14,30,.82);border-radius:14px;backdrop-filter:blur(10px)}
+  .matchTitle{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .matchTitle h1{margin:0;font-size:18px;letter-spacing:.02em}
+  .matchTitle .meta{color:#93a4ca;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .badge{padding:4px 10px;border-radius:999px;font-size:10px;font-weight:950;letter-spacing:.1em}
+  .badge.win{background:rgba(97,242,165,.18);color:#61f2a5;border:1px solid rgba(97,242,165,.4)}
+  .headerBtns{display:flex;gap:8px}
+  .headerBtns button{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#edf2ff;padding:8px 12px;border-radius:10px;font-weight:850;font-size:12px;cursor:pointer}
+
+  /* ── Playback ────────────────────────────────────── */
+  .playback{display:grid;grid-template-columns:auto auto auto auto auto 1fr auto;gap:10px;align-items:center;padding:10px 14px;border:1px solid rgba(255,255,255,.1);background:rgba(11,18,34,.84);border-radius:14px}
+  .playback button{width:38px;height:38px;border-radius:11px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#edf2ff;font-size:14px;cursor:pointer}
+  .playback button.primary{background:#ffe06a;color:#111;width:46px;height:46px;font-size:18px;border-color:#ffe06a}
+  .timeline{appearance:none;height:6px;background:linear-gradient(90deg,#ffe06a 48%,rgba(255,255,255,.12) 48%);border-radius:99px;outline:none}
+  .timeline::-webkit-slider-thumb{appearance:none;width:16px;height:16px;border-radius:50%;background:#ffe06a;border:2px solid #1b1125;cursor:grab}
+  .stepLabel{color:#93a4ca;font-size:12px;font-weight:900;letter-spacing:.06em}
+  .turnChip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:rgba(255,224,106,.15);color:#ffe06a;border:1px solid rgba(255,224,106,.4);font-size:11px;font-weight:900}
+
+  /* ── Main layout ─────────────────────────────────── */
+  .layout{display:grid;grid-template-columns:1fr 340px;gap:14px}
+
+  /* ── Board ───────────────────────────────────────── */
+  .board{display:grid;gap:10px;padding:14px;border:1px solid rgba(255,255,255,.12);background:rgba(11,18,34,.84);border-radius:16px}
+  .side{display:grid;gap:10px;padding:10px;border-radius:13px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.06)}
+  .side.opponent{background:linear-gradient(180deg,rgba(255,115,115,.06),transparent 60%)}
+  .side.self{background:linear-gradient(0deg,rgba(255,224,106,.08),transparent 70%);border-color:rgba(255,224,106,.18)}
+  .sideInfo{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .sideInfo .name{font-weight:950;font-size:13px;display:flex;align-items:center;gap:8px}
+  .sideInfo .name .youTag{font-size:9px;font-weight:950;color:#111;background:#ffe06a;padding:2px 7px;border-radius:999px;letter-spacing:.1em}
+  .counts{display:flex;gap:6px;flex-wrap:wrap}
+  .count{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.08);border-radius:99px;font-size:10.5px;color:#a8b5d4;font-weight:800}
+  .count b{color:#fff;font-size:13px;font-weight:950}
+  .count.prizes b{color:#ffe06a}
+  .count.discard b{color:#ff9a9a}
+  .count.deck b{color:#a8d8ff}
+  .count.clickable{cursor:pointer;transition:background .12s ease,border-color .12s ease}
+  .count.clickable:hover{background:rgba(255,224,106,.16);border-color:rgba(255,224,106,.45);color:#ffe06a}
+  .count.clickable:hover b{color:#ffe06a}
+  .count.clickable::after{content:"👁";opacity:.55;font-size:9.5px;margin-left:1px}
+
+  /* Discard modal */
+  .modalBackdrop{position:fixed;inset:0;background:rgba(2,4,12,.78);z-index:90;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)}
+  .discardModal{width:min(820px,100%);max-height:90vh;background:#0e1629;border:1px solid rgba(255,255,255,.16);border-radius:18px;padding:18px;box-shadow:0 30px 80px rgba(0,0,0,.55);overflow:auto}
+  .discardModal .modalHead{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px;gap:12px;flex-wrap:wrap}
+  .discardModal h3{margin:0;font-size:16px}
+  .discardModal h3 small{display:block;font-size:11px;color:#93a4ca;font-weight:700;margin-top:3px;letter-spacing:.04em}
+  .discardModal .modalMeta{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .discardModal .pill{padding:4px 10px;border-radius:99px;font-size:10.5px;font-weight:900;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#a8b5d4}
+  .discardModal .pill.count{color:#ff9a9a;border-color:rgba(255,115,115,.3);background:rgba(255,115,115,.1)}
+  .discardModal .closeBtn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#edf2ff;padding:7px 12px;border-radius:10px;font-weight:850;font-size:12px;cursor:pointer}
+  .discardModal .sortRow{display:flex;gap:6px;margin-bottom:10px}
+  .discardModal .sortRow .chip{font-size:10px;padding:4px 9px;border-radius:99px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);color:#a8b5d4;font-weight:900;cursor:pointer}
+  .discardModal .sortRow .chip.active{background:rgba(255,224,106,.18);color:#ffe06a;border-color:rgba(255,224,106,.45)}
+  .discardModal .turnGroup{margin-bottom:14px}
+  .discardModal .turnGroup .turnLabel{font-size:10px;color:#5a6889;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px;padding-bottom:4px;border-bottom:1px dashed rgba(255,255,255,.08)}
+  .discardModal .trashGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+  .discardModal .trashCard{position:relative;aspect-ratio:5/7;border-radius:9px;background:#000;border:1.5px solid rgba(255,255,255,.16);overflow:hidden;cursor:pointer}
+  .discardModal .trashCard img{width:100%;height:100%;object-fit:cover;display:block}
+  .discardModal .trashCard .label{position:absolute;left:4px;right:4px;bottom:4px;font-size:8.5px;font-weight:950;text-shadow:0 1px 3px rgba(0,0,0,.95);line-height:1.1}
+  .discardModal .trashCard .src{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.7);color:#ffe06a;font-size:8px;font-weight:950;padding:2px 5px;border-radius:99px;letter-spacing:.04em}
+
+  /* Active pokemon row */
+  .activeRow{display:flex;justify-content:center;padding:6px 0}
+  .self .activeRow{padding-top:14px}
+
+  /* Bench row */
+  .bench{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+
+  /* Pokemon slot card */
+  .slot{position:relative;aspect-ratio:5/7;border-radius:9px;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#5a6889;font-size:10px;font-weight:850;overflow:hidden}
+  .slot.empty{font-size:9px;letter-spacing:.08em}
+  .slot.pokemon{border-style:solid;background:#000;padding:0}
+  .slot.pokemon img{width:100%;height:100%;object-fit:cover;display:block}
+  .slot.pokemon .badges{position:absolute;inset:auto 4px 4px 4px;display:flex;justify-content:space-between;align-items:flex-end;gap:4px;pointer-events:none}
+  .slot.pokemon .cardName{position:absolute;left:4px;right:4px;top:4px;font-size:8.5px;font-weight:950;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9);line-height:1.05}
+  .dmg{display:inline-flex;align-items:center;justify-content:center;background:#ff3a3a;color:#fff;border-radius:7px;padding:1px 5px;font-size:10px;font-weight:950;border:1.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+  .ko{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);color:#ff7373;font-size:10px;font-weight:950;letter-spacing:.06em}
+  .energies{display:flex;gap:2px;flex-wrap:wrap;max-width:60%}
+  .energy{width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:950;border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.6)}
+  .energy.psy{background:#a557c0;color:#fff}
+  .energy.dark{background:#1f2330;color:#fff}
+  .energy.fire{background:#ec5d3a;color:#fff}
+  .energy.water{background:#5fa5e8;color:#fff}
+  .energy.grass{background:#5dbf6b;color:#fff}
+  .energy.fight{background:#c87a2a;color:#fff}
+
+  /* Active slot variant — larger */
+  .active{aspect-ratio:5/7;width:148px;border-radius:13px;position:relative;background:#000;border:2px solid rgba(255,224,106,.55);box-shadow:0 14px 30px rgba(255,224,106,.18);overflow:hidden}
+  .active.empty{background:rgba(255,255,255,.03);border:2px dashed rgba(255,115,115,.45);box-shadow:none}
+  .active img{width:100%;height:100%;object-fit:cover;display:block}
+  .active .cardName{position:absolute;left:6px;right:6px;top:6px;font-size:10.5px;font-weight:950;text-shadow:0 1px 3px rgba(0,0,0,.95)}
+  .active .badges{position:absolute;inset:auto 6px 6px 6px;display:flex;justify-content:space-between;align-items:flex-end}
+  .active .hpBar{position:absolute;left:8px;right:8px;bottom:38px;height:5px;border-radius:99px;background:rgba(0,0,0,.55);overflow:hidden}
+  .active .hpBar span{display:block;height:100%;background:linear-gradient(90deg,#61f2a5,#ffe06a 50%,#ff7373)}
+  .opponent .active{border-color:rgba(255,115,115,.55);box-shadow:0 14px 30px rgba(255,115,115,.15)}
+  .activeBaseLabel{font-size:9px;letter-spacing:.08em;color:#93a4ca;text-align:center;margin-top:6px}
+
+  /* Stadium */
+  .stadium{display:flex;align-items:center;justify-content:center;gap:10px;padding:6px 8px;border-radius:11px;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.12)}
+  .stadium img{width:62px;border-radius:6px;display:block}
+  .stadium .stadiumMeta{display:grid;gap:2px}
+  .stadium .stadiumMeta b{font-size:11px}
+  .stadium .stadiumMeta span{font-size:9.5px;color:#93a4ca;letter-spacing:.08em;text-transform:uppercase}
+
+  /* Hand (self only revealed) */
+  .handZone{margin-top:8px;padding:10px;border-radius:12px;background:rgba(255,224,106,.07);border:1px solid rgba(255,224,106,.22)}
+  .handZone .handTitle{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:11px;color:#ffe06a;font-weight:950;letter-spacing:.06em}
+  .handTitle .reveal{color:#a8b5d4;font-size:10px;font-weight:800;text-transform:none;letter-spacing:0}
+  .hand{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+  .handCard{flex:0 0 auto;width:64px;aspect-ratio:5/7;border-radius:7px;background:#000;border:1.5px solid rgba(255,255,255,.18);position:relative;overflow:hidden;cursor:pointer;transition:transform .08s ease}
+  .handCard:hover{transform:translateY(-4px);border-color:#ffe06a}
+  .handCard img{width:100%;height:100%;object-fit:cover;display:block}
+  .handCard .label{position:absolute;left:3px;right:3px;bottom:3px;font-size:7.5px;font-weight:950;text-shadow:0 1px 2px rgba(0,0,0,.95);line-height:1.05}
+
+  /* Opponent hand (count-only) */
+  .opponentHand{display:flex;justify-content:center;gap:-12px;align-items:flex-end;padding:6px 0;margin-top:4px}
+  .opponentHand .cardBack{flex:0 0 auto;width:32px;height:46px;border-radius:5px;background:linear-gradient(135deg,#3a2954,#1b1125);border:1.5px solid rgba(255,255,255,.18);margin-left:-12px;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+  .opponentHand .cardBack:first-child{margin-left:0}
+
+  /* ── Event log ───────────────────────────────────── */
+  .eventLog{display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:12px;border:1px solid rgba(255,255,255,.12);background:rgba(11,18,34,.84);border-radius:16px;max-height:calc(100vh - 230px);min-height:540px}
+  .logHead{display:flex;justify-content:space-between;align-items:center}
+  .logHead h2{margin:0;font-size:14px}
+  .filterRow{display:flex;gap:6px;flex-wrap:wrap}
+  .filterRow .chip{font-size:9.5px;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.08);color:#a8b5d4;border:1px solid rgba(255,255,255,.1);font-weight:900;cursor:pointer}
+  .filterRow .chip.active{background:rgba(255,224,106,.18);color:#ffe06a;border-color:rgba(255,224,106,.5)}
+  .logList{list-style:none;margin:0;padding:0;overflow-y:auto;display:grid;gap:3px;align-content:start}
+  .logItem{position:relative;padding:6px 9px 6px 24px;border-radius:9px;font-size:11.5px;line-height:1.4;color:#c8d4ef;background:rgba(255,255,255,.02);border-left:3px solid transparent;cursor:pointer}
+  .logItem:hover{background:rgba(255,255,255,.06)}
+  .logItem .turn{position:absolute;left:6px;top:7px;font-size:9px;color:#93a4ca;font-weight:950}
+  .logItem.you{border-left-color:rgba(255,224,106,.55)}
+  .logItem.opp{border-left-color:rgba(255,115,115,.5)}
+  .logItem.system{font-style:italic;color:#93a4ca}
+  .logItem.current{background:rgba(255,224,106,.16);color:#ffe06a;border-left-color:#ffe06a;box-shadow:0 0 0 1px rgba(255,224,106,.4)}
+  .logItem.current b{color:#ffe06a}
+  .logItem b{color:#fff}
+  .logItem.child{margin-left:18px;padding-left:14px;font-size:11px;color:#93a4ca;background:transparent}
+  .logItem.child::before{content:"↳";position:absolute;left:-2px;top:6px;color:#5a6889;font-size:11px}
+  .turnDivider{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#5a6889;text-align:center;padding:8px 0 4px;border-top:1px dashed rgba(255,255,255,.08);margin-top:4px}
+
+  .logFooter{display:flex;justify-content:space-between;align-items:center;color:#5a6889;font-size:10px;padding-top:6px;border-top:1px solid rgba(255,255,255,.06)}
+  .logFooter kbd{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px;font-family:inherit;font-size:9.5px;color:#a8b5d4;border:1px solid rgba(255,255,255,.1)}
+
+  /* ── Action detail callout (current event) ──────── */
+  .currentDetail{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(255,224,106,.16),rgba(255,224,106,.04));border:1px solid rgba(255,224,106,.4)}
+  .currentDetail .icon{width:36px;height:36px;border-radius:10px;background:#ffe06a;color:#111;display:flex;align-items:center;justify-content:center;font-weight:950;font-size:14px;flex:0 0 auto}
+  .currentDetail .text{display:grid;gap:2px;min-width:0}
+  .currentDetail .text strong{font-size:13px;color:#ffe06a}
+  .currentDetail .text span{font-size:11.5px;color:#edf2ff}
+  .currentDetail .text small{font-size:10px;color:#93a4ca;letter-spacing:.06em}
+
+  /* Annotation overlay note for mockup */
+  .note{padding:8px 12px;background:rgba(96,165,250,.1);border:1px dashed rgba(96,165,250,.4);border-radius:10px;color:#cfe5ff;font-size:11.5px;line-height:1.5}
+  .note strong{color:#fff}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="matchTitle">
+      <span class="badge win">WIN</span>
+      <h1>toropoke0421 <span style="color:#93a4ca;font-weight:400">vs</span> fastboy15</h1>
+      <span class="meta">2026-05-19 · Dragapult ex vs Mega Starmie ex / Munkidori</span>
+    </div>
+    <div class="headerBtns">
+      <button>Speed ×1.0</button>
+      <button>イベントタイプ絞り込み</button>
+      <button>閉じる</button>
+    </div>
+  </header>
+
+  <!-- PLAYBACK -->
+  <div class="playback">
+    <button title="最初へ">⏮</button>
+    <button title="前のアクション">◀</button>
+    <button class="primary" title="再生/一時停止">▶</button>
+    <button title="次のアクション">▶▶</button>
+    <button title="最後へ">⏭</button>
+    <input type="range" class="timeline" min="0" max="120" value="58" />
+    <span class="stepLabel">
+      <span class="turnChip">Turn 5 / 8</span>
+      &nbsp; Event <b style="color:#fff">58</b> / 120
+    </span>
+  </div>
+
+  <!-- CURRENT EVENT CALLOUT -->
+  <div class="currentDetail">
+    <div class="icon">⚔︎</div>
+    <div class="text">
+      <small>TURN 5 · TOROPOKE0421's TURN</small>
+      <strong>Dragapult ex used Phantom Dive on fastboy15's Mega Starmie ex for 200 damage.</strong>
+      <span>サブ効果: 自分の Munkidori にダメージカウンター6個を置いた</span>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <main class="layout">
+
+    <!-- BOARD -->
+    <section class="board">
+
+      <!-- OPPONENT (top) -->
+      <div class="side opponent">
+        <div class="sideInfo">
+          <div class="name">fastboy15</div>
+          <div class="counts">
+            <span class="count prizes"><b>4</b> / 6 prize</span>
+            <span class="count deck"><b>22</b> deck</span>
+            <span class="count hand"><b>5</b> hand</span>
+            <span class="count discard clickable" title="クリックで中身表示"><b>14</b> trash</span>
+          </div>
+        </div>
+
+        <!-- opponent hand (back-of-card count only) -->
+        <div class="opponentHand">
+          <div class="cardBack"></div><div class="cardBack"></div><div class="cardBack"></div><div class="cardBack"></div><div class="cardBack"></div>
+        </div>
+
+        <!-- opponent bench -->
+        <div class="bench">
+          <div class="slot pokemon">
+            <span class="cardName">Dreepy</span>
+            <img src="https://images.scrydex.com/pokemon/me2pt5-247/large" alt="Dreepy" />
+          </div>
+          <div class="slot empty">空</div>
+          <div class="slot empty">空</div>
+          <div class="slot empty">空</div>
+          <div class="slot empty">空</div>
+        </div>
+
+        <!-- opponent active -->
+        <div class="activeRow">
+          <div class="active empty">
+            <div class="ko">KO 直後 — 入替待ち</div>
+          </div>
+        </div>
+        <div class="activeBaseLabel">↑ アクティブ (空)</div>
+      </div>
+
+      <!-- STADIUM (between players) -->
+      <div class="stadium">
+        <img src="https://images.scrydex.com/pokemon/me2pt5-210/large" alt="Team Rocket's Watchtower" />
+        <div class="stadiumMeta">
+          <b>Team Rocket's Watchtower</b>
+          <span>STADIUM · played by toropoke0421</span>
+        </div>
+      </div>
+
+      <!-- SELF (bottom) -->
+      <div class="side self">
+        <div class="activeBaseLabel">↓ アクティブ</div>
+        <div class="activeRow">
+          <div class="active">
+            <span class="cardName">Dragapult ex</span>
+            <img src="https://images.pokemontcg.io/sv8pt5/165_hires.png" alt="Dragapult ex" />
+            <div class="hpBar"><span style="width:70%"></span></div>
+            <div class="badges">
+              <div class="energies">
+                <span class="energy psy">P</span>
+                <span class="energy psy">P</span>
+              </div>
+              <span class="dmg">60</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- self bench -->
+        <div class="bench">
+          <div class="slot pokemon">
+            <span class="cardName">Drakloak</span>
+            <img src="https://images.scrydex.com/pokemon/me2pt5-248/large" alt="Drakloak" />
+          </div>
+          <div class="slot pokemon">
+            <span class="cardName">Drakloak</span>
+            <img src="https://images.scrydex.com/pokemon/me2pt5-248/large" alt="Drakloak" />
+          </div>
+          <div class="slot pokemon">
+            <span class="cardName">Munkidori</span>
+            <img src="https://images.scrydex.com/pokemon/me2pt5-99/large" alt="Munkidori" />
+            <div class="badges">
+              <div class="energies"><span class="energy dark">D</span></div>
+              <span class="dmg">60</span>
+            </div>
+          </div>
+          <div class="slot pokemon">
+            <span class="cardName">Fezandipiti ex</span>
+            <img src="https://images.scrydex.com/pokemon/me2pt5-288/large" alt="Fezandipiti ex" />
+          </div>
+          <div class="slot empty">空</div>
+        </div>
+
+        <div class="sideInfo">
+          <div class="name">toropoke0421 <span class="youTag">YOU</span></div>
+          <div class="counts">
+            <span class="count prizes"><b>4</b> / 6 prize</span>
+            <span class="count deck"><b>28</b> deck</span>
+            <span class="count hand"><b>7</b> hand</span>
+            <span class="count discard clickable" title="クリックで中身表示"><b>12</b> trash</span>
+          </div>
+        </div>
+
+        <!-- self hand REVEALED -->
+        <div class="handZone">
+          <div class="handTitle">
+            <span>🖐 自分の手札 (7枚)</span>
+            <span class="reveal">※ 自分の手札はバトルログから完全復元 — 初手 + ドロー + プライズ獲得 - 使用/トラッシュ/添付/進化</span>
+          </div>
+          <div class="hand">
+            <div class="handCard">
+              <img src="https://images.scrydex.com/pokemon/me2pt5-256/large" alt="Boss's Orders"/>
+              <span class="label">Boss's Orders</span>
+            </div>
+            <div class="handCard">
+              <img src="https://images.pokemontcg.io/sv8pt5/171_hires.png" alt="Crispin"/>
+              <span class="label">Crispin</span>
+            </div>
+            <div class="handCard">
+              <img src="https://images.scrydex.com/pokemon/me3-123/large" alt="Rosa's Encouragement"/>
+              <span class="label">Rosa's Encouragement</span>
+            </div>
+            <div class="handCard">
+              <img src="https://images.scrydex.com/pokemon/me2pt5-264/large" alt="Ultra Ball"/>
+              <span class="label">Ultra Ball</span>
+            </div>
+            <div class="handCard">
+              <img src="https://images.scrydex.com/pokemon/me2pt5-248/large" alt="Drakloak"/>
+              <span class="label">Drakloak</span>
+            </div>
+            <div class="handCard">
+              <img src="https://images.pokemontcg.io/me2/129_hires.png" alt="Dawn"/>
+              <span class="label">Dawn</span>
+            </div>
+            <div class="handCard">
+              <img src="https://images.pokemontcg.io/sv8pt5/37_hires.png" alt="Dusknoir"/>
+              <span class="label">Dusknoir</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EVENT LOG -->
+    <aside class="eventLog">
+      <div class="logHead">
+        <h2>イベントログ</h2>
+      </div>
+      <div class="filterRow">
+        <span class="chip active">すべて</span>
+        <span class="chip">技/特性のみ</span>
+        <span class="chip">KO/プライズ</span>
+        <span class="chip">トレーナー</span>
+      </div>
+      <ul class="logList">
+        <li class="turnDivider">— Turn 5 · toropoke0421's Turn —</li>
+        <li class="logItem you"><span class="turn">5</span>drew <b>Judge</b></li>
+        <li class="logItem you"><span class="turn">5</span>played <b>Night Stretcher</b></li>
+        <li class="logItem child">Drakloak を手札に戻した</li>
+        <li class="logItem you"><span class="turn">5</span>evolved Dreepy → <b>Drakloak</b> (Bench)</li>
+        <li class="logItem you"><span class="turn">5</span>attached <b>Psychic</b> to Dreepy (Active)</li>
+        <li class="logItem you"><span class="turn">5</span>played <b>Team Rocket's Watchtower</b></li>
+        <li class="logItem you"><span class="turn">5</span>played <b>Ultra Ball</b></li>
+        <li class="logItem child">Discard: Basic Darkness Energy, Judge</li>
+        <li class="logItem child">Drew: Duskull</li>
+        <li class="logItem you"><span class="turn">5</span>played Duskull to the Bench</li>
+        <li class="logItem you"><span class="turn">5</span>played <b>Lillie's Determination</b> (drew 8)</li>
+        <li class="logItem you"><span class="turn">5</span>played <b>Rare Candy</b></li>
+        <li class="logItem child">Dreepy → <b>Dragapult ex</b> (Active)</li>
+        <li class="logItem you"><span class="turn">5</span>Fezandipiti ex used <b>Flip the Script</b> (drew 3)</li>
+        <li class="logItem you"><span class="turn">5</span>Drakloak used <b>Recon Directive</b> (drew Rosa's)</li>
+        <li class="logItem you current"><span class="turn">5</span>Dragapult ex used <b>Phantom Dive</b> on Mega Starmie ex for <b>200</b> damage</li>
+        <li class="logItem child">6 damage counters → Munkidori</li>
+        <li class="logItem system">Mega Starmie ex was Knocked Out!</li>
+        <li class="logItem system">toropoke0421 took 2 Prize cards</li>
+      </ul>
+      <div class="logFooter">
+        <span><kbd>←</kbd> 戻る · <kbd>→</kbd> 進む · <kbd>Space</kbd> 再生</span>
+        <span>クリックでジャンプ</span>
+      </div>
+    </aside>
+  </main>
+
+  <!-- DISCARD PILE MODAL (shown open in mockup for spec demo) -->
+  <div class="modalBackdrop">
+    <div class="discardModal">
+      <div class="modalHead">
+        <div>
+          <h3>🗑 toropoke0421 のトラッシュ
+            <small>※ トラッシュは公開情報なので、相手側も同じUIで完全に中身が見れます</small>
+          </h3>
+        </div>
+        <div class="modalMeta">
+          <span class="pill count">12 枚</span>
+          <span class="pill">P: 3</span>
+          <span class="pill">Trainer: 6</span>
+          <span class="pill">Energy: 3</span>
+          <button class="closeBtn">閉じる ✕</button>
+        </div>
+      </div>
+
+      <div class="turnGroup">
+        <div class="turnLabel">Turn 2 — Ultra Ball で discard</div>
+        <div class="trashGrid">
+          <div class="trashCard">
+            <img src="https://images.scrydex.com/pokemon/me2pt5-256/large" alt="Boss's Orders" />
+            <span class="src">T2</span>
+            <span class="label">Boss's Orders</span>
+          </div>
+          <div class="trashCard">
+            <img src="https://images.pokemontcg.io/sv8pt5/165_hires.png" alt="Dragapult ex" />
+            <span class="src">T2</span>
+            <span class="label">Dragapult ex</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="turnGroup">
+        <div class="turnLabel">Turn 4 — Mega Starmie ex の Jetting Blow で KO</div>
+        <div class="trashGrid">
+          <div class="trashCard">
+            <img src="https://images.scrydex.com/pokemon/me2pt5-247/large" alt="Dreepy" />
+            <span class="src">T4 KO</span>
+            <span class="label">Dreepy</span>
+          </div>
+          <div class="trashCard">
+            <img src="https://images.scrydex.com/pokemon/me2pt5-248/large" alt="Drakloak" />
+            <span class="src">T4 KO</span>
+            <span class="label">Drakloak</span>
+          </div>
+          <div class="trashCard">
+            <img src="https://images.scrydex.com/pokemon/me2pt5-247/large" alt="Dreepy (evo line)" />
+            <span class="src">T4 KO</span>
+            <span class="label">Dreepy (evo line)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="turnGroup">
+        <div class="turnLabel">Turn 4 — Ultra Ball で discard</div>
+        <div class="trashGrid">
+          <div class="trashCard">
+            <img src="https://images.scrydex.com/pokemon/me2pt5-99/large" alt="Meowth ex" />
+            <span class="src">T4</span>
+            <span class="label">Meowth ex</span>
+          </div>
+          <div class="trashCard" style="background:linear-gradient(135deg,#3a2954,#1b1125)">
+            <span class="src">T4</span>
+            <span class="label">Jamming Tower</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="turnGroup">
+        <div class="turnLabel">Turn 5 — Ultra Ball で discard</div>
+        <div class="trashGrid">
+          <div class="trashCard" style="background:linear-gradient(135deg,#1f2330,#0c0d18)">
+            <span class="src">T5</span>
+            <span class="label">Basic Darkness Energy</span>
+          </div>
+          <div class="trashCard" style="background:linear-gradient(135deg,#8b1f37,#5b1426)">
+            <span class="src">T5</span>
+            <span class="label">Judge</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MOCKUP NOTE -->
+  <div class="note">
+    <strong>このモックの構造で実装する想定:</strong>
+    ① 上部=ヘッダ (試合情報 + 勝敗バッジ)、② 再生コントロール (スライダー + 再生/ステップ送り + 現在ターン/イベント番号)、③ 現在イベント詳細カード、④ ボード (相手上 / 自分下、両者の場・ベンチ・プライズ・山札・トラッシュ・手札枚数)、⑤ 自分手札のみ実カード画像で開示、⑥ 右側イベントログ (現在行ハイライト、クリックでジャンプ、フィルタ可能)。<br/>
+    実装時の補足: 相手のアクティブ画像は<em>判明している</em>時点のカードを表示 (ベンチに置いた時/技を使った時/進化した時に判明)。判明前は伏せ札イラスト。スタジアム枠は両者の場の中央。プライズ数値はサイド進行で減算、トラッシュ枚数も逐次反映。<br/>
+    <strong>トラッシュpillクリック → 中身表示モーダル</strong>: 両者ともクリック可。時系列 / カード種別 / 名前順でソート切替。各カードに「いつ何で落ちたか」のソースタグ (T2 Ultra Ball、T4 KO 等) 付き → リプレイ中の意思決定が遡れる。
+    <br/><br/>
+    <strong>実装フロー (履歴ボタン)</strong>: <code>HistoryList</code> の各 <code>historyItem</code> 内の <code>historyActions</code> に <b>履歴 ▶</b> ボタンを追加 → 押下で <code>match.battleLog</code> を <code>parseBattleLog(log, viewerName)</code> に渡して <code>BattleEvent[]</code> 化 → このリプレイモーダルを開く。<code>HistoryList</code> は履歴タブと相性表詳細の「該当試合の履歴」両方で使われているので、1箇所の修正で両画面に出る。
+  </div>
+
+</div>
+</body>
+</html>
