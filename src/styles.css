@@ -39,3 +39,51 @@
 .variantEditRow{display:grid;grid-template-columns:36px 1fr 1.7fr 38px;gap:7px;align-items:center}
 .miniActions{display:grid;grid-template-columns:1fr;gap:8px;margin-top:9px}
 .modal h3{margin:12px 0 6px;font-size:13px;color:#a8b5d4}
+
+/* v16 deck thumbnail stack (max 2 images) */
+.deckThumbStack{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:rgba(255,255,255,.08);border-radius:10px;padding:2px}
+.deckThumbStack img{display:block;object-fit:contain;border-radius:6px;background:transparent;width:100%}
+.rowHead .deckThumbStack{width:46px;height:38px;padding:1px}
+.rowHead .deckThumbStack.single img{height:34px}
+.rowHead .deckThumbStack.double img{height:17px}
+.opponentHead .deckThumbStack{width:42px;height:46px;padding:1px}
+.opponentHead .deckThumbStack.single img{height:42px}
+.opponentHead .deckThumbStack.double img{height:21px}
+.opponentHead{height:54px}
+.rowHead{grid-template-columns:1fr 50px}
+@media(max-width:900px){
+  .rowHead .deckThumbStack{width:42px;height:36px}
+  .rowHead .deckThumbStack.single img{height:32px}
+  .rowHead .deckThumbStack.double img{height:16px}
+  .opponentHead .deckThumbStack{width:38px;height:42px}
+  .opponentHead .deckThumbStack.single img{height:38px}
+  .opponentHead .deckThumbStack.double img{height:19px}
+}
+.editorPreviewImages{display:flex;gap:6px;align-items:center}
+.editorPreviewImages img{width:54px;height:54px;object-fit:contain;background:rgba(255,255,255,.08);border-radius:11px;padding:3px}
+
+/* v17 matrix summary columns (games/wins/losses) */
+.summaryHead{min-width:38px;background:#182033!important;color:#a8b5d4!important;font-size:10px!important;font-weight:850!important;text-align:center!important;letter-spacing:0!important;text-transform:none!important;padding:6px 4px!important}
+.summaryCell{width:38px;min-width:38px;background:#10172a;color:#edf2ff!important;font-size:12px;font-weight:900;text-align:center}
+.summaryCell.winCell{color:#61f2a5!important}
+.summaryCell.lossCell{color:#ff7373!important}
+.matchupMatrix{min-width:1100px}
+@media(max-width:900px){.matchupMatrix{min-width:1000px}.summaryHead,.summaryCell{min-width:34px;width:34px}}
+@media(max-width:430px){.matchupMatrix{min-width:920px}.summaryHead,.summaryCell{min-width:30px;width:30px;font-size:11px}}
+
+/* v18 history filter */
+.historyToolbar{display:flex;align-items:center;gap:6px}
+.filterToggle{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:#edf2ff;border-radius:10px;padding:7px 10px;font-size:11px;font-weight:900;cursor:pointer}
+.filterToggle:hover{background:rgba(255,255,255,.14)}
+.filterToggle.active{background:rgba(255,224,106,.18);color:#ffe06a;border-color:rgba(255,224,106,.45)}
+.filterToggle .badge{background:#ffe06a;color:#111;border-radius:999px;padding:1px 6px;font-size:10px;font-weight:950;line-height:1.25}
+.filterPanel{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0 10px;padding:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.045);border-radius:12px}
+.filterPanel label{gap:3px;font-size:10px;color:#a8b5d4;font-weight:850}
+.filterPanel select,.filterPanel input{padding:7px 9px;font-size:12px;border-radius:9px}
+.filterPanel select:disabled{opacity:.45;cursor:not-allowed}
+.filterPanel .filterFull{grid-column:1/-1}
+.filterPanel .filterFooter{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:8px;color:#93a4ca;font-size:11px;margin-top:2px}
+.filterPanel .clearFilters{background:rgba(255,115,115,.16);border-color:rgba(255,115,115,.4);color:#ff9a9a;cursor:pointer}
+.filterPanel .clearFilters:hover{background:rgba(255,115,115,.26)}
+@media(max-width:900px){.filterPanel{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:430px){.filterPanel{grid-template-columns:1fr}}

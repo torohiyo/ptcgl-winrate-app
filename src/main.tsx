@@ -32,6 +32,7 @@ type Deck = {
   name: string;
   imageId: string;
   imageUrl?: string;
+  imageUrl2?: string;
   memo?: string;
   isMyDeck: boolean;
   variants: DeckVariant[];
@@ -63,6 +64,7 @@ type DraftDeck = {
   name: string;
   imageId: string;
   imageUrl: string;
+  imageUrl2: string;
   memo: string;
   isMyDeck: boolean;
   variants: DeckVariant[];
@@ -97,6 +99,7 @@ type CloudDeckRow = {
   name: string;
   image_id: string | null;
   image_url: string | null;
+  image_url_2: string | null;
   memo: string | null;
   is_my_deck: boolean | null;
   created_at: string | null;
@@ -141,6 +144,11 @@ const cleanUrl = (value: string) => value.trim();
 const deckImageUrl = (deck: Deck) =>
   cleanUrl(deck.imageUrl || "") ||
   `${IMAGE_BASE_URL}/${deck.imageId || deck.id}.png`;
+const deckImageUrls = (deck: Deck): string[] => {
+  const primary = deckImageUrl(deck);
+  const secondary = cleanUrl(deck.imageUrl2 || "");
+  return secondary ? [primary, secondary] : [primary];
+};
 const variantImageUrl = (variant?: DeckVariant) =>
   cleanUrl(variant?.imageUrl || "");
 const resultLabel = (r: MatchResult) =>
@@ -192,6 +200,7 @@ const defaultDecks: Deck[] = defaultDeckSeed.map(
     name,
     imageId: imageOverride || id,
     imageUrl: "",
+    imageUrl2: "",
     memo: "",
     isMyDeck: index === 0,
     variants: id === "dragapult" ? dragapultVariants : [],
@@ -224,6 +233,7 @@ function ensureDefaultDecks(existing: Deck[]): Deck[] {
       ...current,
       imageId: current.imageId || defaultDeck.imageId,
       imageUrl: current.imageUrl || defaultDeck.imageUrl,
+      imageUrl2: current.imageUrl2 || defaultDeck.imageUrl2 || "",
       variants: hasDragapultDefaultVariants
         ? dragapultVariants
         : current.variants || [],
@@ -253,6 +263,7 @@ function migrateDecks(rawDecks: unknown): Deck[] {
       name,
       imageId: String(deckLike?.imageId || id),
       imageUrl: String(deckLike?.imageUrl || ""),
+      imageUrl2: String(deckLike?.imageUrl2 || ""),
       memo: String(deckLike?.memo || ""),
       isMyDeck: Boolean(deckLike?.isMyDeck),
       variants,
@@ -288,10 +299,22 @@ function migrateMatches(rawMatches: unknown): MatchRecord[] {
   );
 }
 
+function migrateLastMyVariantByDeck(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object") return {};
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof key === "string" && typeof value === "string" && value) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function loadState(): {
   decks: Deck[];
   matches: MatchRecord[];
   playerName: string;
+  lastMyVariantByDeck: Record<string, string>;
 } {
   const keys = [STORAGE_KEY, ...OLD_STORAGE_KEYS];
   for (const key of keys) {
@@ -303,12 +326,20 @@ function loadState(): {
         decks: migrateDecks(parsed.decks),
         matches: migrateMatches(parsed.matches),
         playerName: String(parsed.playerName || DEFAULT_PLAYER_NAME),
+        lastMyVariantByDeck: migrateLastMyVariantByDeck(
+          parsed.lastMyVariantByDeck,
+        ),
       };
     } catch {
       continue;
     }
   }
-  return { decks: defaultDecks, matches: [], playerName: DEFAULT_PLAYER_NAME };
+  return {
+    decks: defaultDecks,
+    matches: [],
+    playerName: DEFAULT_PLAYER_NAME,
+    lastMyVariantByDeck: {},
+  };
 }
 
 function deckToCloudRow(deck: Deck) {
@@ -317,6 +348,7 @@ function deckToCloudRow(deck: Deck) {
     name: deck.name,
     image_id: deck.imageId,
     image_url: cleanUrl(deck.imageUrl || ""),
+    image_url_2: cleanUrl(deck.imageUrl2 || ""),
     memo: deck.memo || "",
     is_my_deck: deck.isMyDeck,
     created_at: deck.createdAt,
@@ -369,6 +401,7 @@ function rowsToDecks(
       name: row.name,
       imageId: row.image_id || row.id,
       imageUrl: row.image_url || "",
+      imageUrl2: row.image_url_2 || "",
       memo: row.memo || "",
       isMyDeck: Boolean(row.is_my_deck),
       variants: variantsByDeck.get(row.id) || [],
@@ -632,6 +665,26 @@ function SafeImage({
   );
 }
 
+function DeckThumbStack({
+  deck,
+  variant = "row",
+}: {
+  deck: Deck;
+  variant?: "row" | "col";
+}) {
+  const urls = deckImageUrls(deck);
+  const doubled = urls.length > 1;
+  return (
+    <div
+      className={`deckThumbStack ${variant === "col" ? "col" : "row"} ${doubled ? "double" : "single"}`}
+    >
+      {urls.map((url, index) => (
+        <SafeImage key={`${url}-${index}`} src={url} alt="" />
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const initial = useMemo(() => loadState(), []);
   const [tab, setTab] = useState<Tab>("record");
@@ -661,6 +714,9 @@ function App() {
   const [expandedMatchId, setExpandedMatchId] = useState<string | null>(null);
   const [newDeckName, setNewDeckName] = useState("");
   const [editingMatch, setEditingMatch] = useState<MatchRecord | null>(null);
+  const [lastMyVariantByDeck, setLastMyVariantByDeck] = useState<
+    Record<string, string>
+  >(initial.lastMyVariantByDeck);
 
   const myDeck = getDeck(decks, myDeckId);
   const opponentDeck = getDeck(decks, opponentDeckId);
@@ -720,9 +776,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ decks, matches, playerName }),
+      JSON.stringify({ decks, matches, playerName, lastMyVariantByDeck }),
     );
-  }, [decks, matches, playerName]);
+  }, [decks, matches, playerName, lastMyVariantByDeck]);
 
   useEffect(() => {
     const currentDeck = getDeck(decks, myDeckId);
@@ -730,10 +786,13 @@ function App() {
       currentDeck.variants.length &&
       !currentDeck.variants.some((variant) => variant.id === myVariantId)
     ) {
-      setMyVariantId(currentDeck.variants[0].id);
+      const lastId = lastMyVariantByDeck[myDeckId];
+      const lastValid =
+        lastId && currentDeck.variants.some((v) => v.id === lastId);
+      setMyVariantId(lastValid ? lastId : currentDeck.variants[0].id);
     }
     if (!currentDeck.variants.length && myVariantId) setMyVariantId("");
-  }, [decks, myDeckId, myVariantId]);
+  }, [decks, myDeckId, myVariantId, lastMyVariantByDeck]);
 
   useEffect(() => {
     const currentDeck = getDeck(decks, opponentDeckId);
@@ -791,6 +850,12 @@ function App() {
       note,
     };
     setMatches((prev) => [record, ...prev]);
+    if (finalMyVariantId) {
+      setLastMyVariantByDeck((prev) => ({
+        ...prev,
+        [myDeckId]: finalMyVariantId,
+      }));
+    }
     try {
       await persistMatchToCloud(record);
       if (isCloudEnabled) setSyncMessage("試合をSupabaseに保存しました。");
@@ -849,6 +914,7 @@ function App() {
       name: deck.name,
       imageId: deck.imageId,
       imageUrl: deck.imageUrl || "",
+      imageUrl2: deck.imageUrl2 || "",
       memo: deck.memo || "",
       isMyDeck: deck.isMyDeck,
       variants: deck.variants.map((variant) => ({ ...variant })),
@@ -866,6 +932,7 @@ function App() {
       name: cleanName,
       imageId: normalize(draftDeck.imageId) || baseDeck.imageId,
       imageUrl: cleanUrl(draftDeck.imageUrl),
+      imageUrl2: cleanUrl(draftDeck.imageUrl2),
       memo: draftDeck.memo,
       isMyDeck: draftDeck.isMyDeck,
       variants: draftDeck.variants.map((variant, index) => ({
@@ -935,6 +1002,7 @@ function App() {
       name,
       imageId: finalId,
       imageUrl: "",
+      imageUrl2: "",
       memo: "",
       isMyDeck: true,
       variants: [],
@@ -983,7 +1051,7 @@ function App() {
     }
   };
 
-  const exportCsv = () => {
+  const exportCsv = (records?: MatchRecord[]) => {
     const header = [
       "playedAt",
       "result",
@@ -997,7 +1065,8 @@ function App() {
       "note",
       "battleLog",
     ];
-    const rows = matches.map((m) => {
+    const source = records ?? matches;
+    const rows = source.map((m) => {
       const my = getDeck(decks, m.myDeckId);
       const opponent = getDeck(decks, m.opponentDeckId);
       return [
@@ -1460,10 +1529,13 @@ function MatrixPage({
           <thead>
             <tr>
               <th className="stickyCorner">デッキ名</th>
+              <th className="summaryHead">試合</th>
+              <th className="summaryHead">勝</th>
+              <th className="summaryHead">敗</th>
               <th className="totalHead">総合</th>
               {decks.map((deck) => (
                 <th key={deck.id} className="opponentHead" title={deck.name}>
-                  <SafeImage src={deckImageUrl(deck)} alt="" />
+                  <DeckThumbStack deck={deck} variant="col" />
                 </th>
               ))}
             </tr>
@@ -1478,12 +1550,19 @@ function MatrixPage({
                 <tr key={myDeck.id}>
                   <th className="rowHead">
                     <span>{myDeck.name}</span>
-                    <SafeImage src={deckImageUrl(myDeck)} alt="" />
+                    <DeckThumbStack deck={myDeck} variant="row" />
                   </th>
+                  <td className="matrixCell summaryCell">{totalStats.total}</td>
+                  <td className="matrixCell summaryCell winCell">
+                    {totalStats.wins}
+                  </td>
+                  <td className="matrixCell summaryCell lossCell">
+                    {totalStats.losses}
+                  </td>
                   <td
                     className={`matrixCell totalCell ${cellClass(totalStats.total, totalStats.winRate)}`}
                   >
-                    {totalStats.winRate.toFixed(1)}
+                    {totalStats.total ? totalStats.winRate.toFixed(1) : "N/A"}
                   </td>
                   {decks.map((opponentDeck) => {
                     const target = matches.filter(
@@ -1503,7 +1582,7 @@ function MatrixPage({
                           type="button"
                           onClick={() => openDetail(myDeck.id, opponentDeck.id)}
                         >
-                          {stats.winRate.toFixed(1)}
+                          {stats.total ? stats.winRate.toFixed(1) : "N/A"}
                         </button>
                       </td>
                     );
@@ -1636,6 +1715,76 @@ function DetailPage({
   );
 }
 
+type HistoryFilter = {
+  myDeckId: string;
+  myVariantId: string;
+  opponentDeckId: string;
+  opponentVariantId: string;
+  result: "" | MatchResult;
+  turnOrder: "" | TurnOrder;
+  dateFrom: string;
+  dateTo: string;
+  search: string;
+};
+
+const emptyHistoryFilter: HistoryFilter = {
+  myDeckId: "",
+  myVariantId: "",
+  opponentDeckId: "",
+  opponentVariantId: "",
+  result: "",
+  turnOrder: "",
+  dateFrom: "",
+  dateTo: "",
+  search: "",
+};
+
+function applyHistoryFilter(
+  matches: MatchRecord[],
+  filter: HistoryFilter,
+): MatchRecord[] {
+  const fromTs = filter.dateFrom
+    ? new Date(`${filter.dateFrom}T00:00:00`).getTime()
+    : null;
+  const toTs = filter.dateTo
+    ? new Date(`${filter.dateTo}T23:59:59.999`).getTime()
+    : null;
+  const q = filter.search.trim().toLowerCase();
+  return matches.filter((m) => {
+    if (filter.myDeckId && m.myDeckId !== filter.myDeckId) return false;
+    if (filter.myVariantId && m.myVariantId !== filter.myVariantId) return false;
+    if (filter.opponentDeckId && m.opponentDeckId !== filter.opponentDeckId)
+      return false;
+    if (
+      filter.opponentVariantId &&
+      m.opponentVariantId !== filter.opponentVariantId
+    )
+      return false;
+    if (filter.result && m.result !== filter.result) return false;
+    if (filter.turnOrder && m.turnOrder !== filter.turnOrder) return false;
+    if (fromTs !== null || toTs !== null) {
+      const ts = new Date(m.playedAt).getTime();
+      if (fromTs !== null && ts < fromTs) return false;
+      if (toTs !== null && ts > toTs) return false;
+    }
+    if (q) {
+      const hay = `${m.opponentName} ${m.note}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function countActiveHistoryFilter(filter: HistoryFilter): number {
+  let count = 0;
+  (Object.keys(emptyHistoryFilter) as Array<keyof HistoryFilter>).forEach(
+    (key) => {
+      if (filter[key] && filter[key] !== "") count += 1;
+    },
+  );
+  return count;
+}
+
 function HistoryPage({
   decks,
   matches,
@@ -1649,28 +1798,212 @@ function HistoryPage({
   matches: MatchRecord[];
   expandedMatchId: string | null;
   setExpandedMatchId: (id: string | null) => void;
-  exportCsv: () => void;
+  exportCsv: (records?: MatchRecord[]) => void;
   onEditMatch: (match: MatchRecord) => void;
   onDeleteMatch: (matchId: string) => void;
 }) {
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filter, setFilter] = useState<HistoryFilter>(emptyHistoryFilter);
+  const filtered = useMemo(
+    () => applyHistoryFilter(matches, filter),
+    [matches, filter],
+  );
+  const activeCount = countActiveHistoryFilter(filter);
   return (
     <main className="card">
       <div className="sectionTitle">
         <h2>Transaction History</h2>
-        <button className="smallButton" type="button" onClick={exportCsv}>
-          <Download size={13} />
-          CSV
-        </button>
+        <div className="historyToolbar">
+          <button
+            type="button"
+            className={`filterToggle ${activeCount ? "active" : ""}`}
+            onClick={() => setFilterOpen((v) => !v)}
+            aria-expanded={filterOpen}
+          >
+            フィルタ
+            {activeCount ? <span className="badge">{activeCount}</span> : null}
+          </button>
+          <button
+            className="smallButton"
+            type="button"
+            onClick={() => exportCsv(filtered)}
+          >
+            <Download size={13} />
+            CSV
+          </button>
+        </div>
       </div>
+      {filterOpen && (
+        <HistoryFilterPanel
+          decks={decks}
+          filter={filter}
+          setFilter={setFilter}
+          totalCount={matches.length}
+          filteredCount={filtered.length}
+        />
+      )}
       <HistoryList
         decks={decks}
-        matches={matches}
+        matches={filtered}
         expandedMatchId={expandedMatchId}
         setExpandedMatchId={setExpandedMatchId}
         onEditMatch={onEditMatch}
         onDeleteMatch={onDeleteMatch}
       />
     </main>
+  );
+}
+
+function HistoryFilterPanel({
+  decks,
+  filter,
+  setFilter,
+  totalCount,
+  filteredCount,
+}: {
+  decks: Deck[];
+  filter: HistoryFilter;
+  setFilter: (next: HistoryFilter) => void;
+  totalCount: number;
+  filteredCount: number;
+}) {
+  const myVariants = filter.myDeckId
+    ? decks.find((d) => d.id === filter.myDeckId)?.variants || []
+    : [];
+  const opponentVariants = filter.opponentDeckId
+    ? decks.find((d) => d.id === filter.opponentDeckId)?.variants || []
+    : [];
+  const set = (patch: Partial<HistoryFilter>) =>
+    setFilter({ ...filter, ...patch });
+  return (
+    <div className="filterPanel">
+      <label>
+        自分のデッキ
+        <select
+          value={filter.myDeckId}
+          onChange={(e) =>
+            set({ myDeckId: e.target.value, myVariantId: "" })
+          }
+        >
+          <option value="">すべて</option>
+          {decks.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        自分の型
+        <select
+          value={filter.myVariantId}
+          onChange={(e) => set({ myVariantId: e.target.value })}
+          disabled={!myVariants.length}
+        >
+          <option value="">すべて</option>
+          {myVariants.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        相手のデッキ
+        <select
+          value={filter.opponentDeckId}
+          onChange={(e) =>
+            set({ opponentDeckId: e.target.value, opponentVariantId: "" })
+          }
+        >
+          <option value="">すべて</option>
+          {decks.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        相手の型
+        <select
+          value={filter.opponentVariantId}
+          onChange={(e) => set({ opponentVariantId: e.target.value })}
+          disabled={!opponentVariants.length}
+        >
+          <option value="">すべて</option>
+          {opponentVariants.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        勝敗
+        <select
+          value={filter.result}
+          onChange={(e) =>
+            set({ result: e.target.value as HistoryFilter["result"] })
+          }
+        >
+          <option value="">すべて</option>
+          <option value="win">勝利</option>
+          <option value="loss">敗北</option>
+          <option value="unknown">不明</option>
+        </select>
+      </label>
+      <label>
+        先後
+        <select
+          value={filter.turnOrder}
+          onChange={(e) =>
+            set({ turnOrder: e.target.value as HistoryFilter["turnOrder"] })
+          }
+        >
+          <option value="">すべて</option>
+          <option value="first">先攻</option>
+          <option value="second">後攻</option>
+          <option value="unknown">不明</option>
+        </select>
+      </label>
+      <label>
+        期間 From
+        <input
+          type="date"
+          value={filter.dateFrom}
+          onChange={(e) => set({ dateFrom: e.target.value })}
+        />
+      </label>
+      <label>
+        期間 To
+        <input
+          type="date"
+          value={filter.dateTo}
+          onChange={(e) => set({ dateTo: e.target.value })}
+        />
+      </label>
+      <label className="filterFull">
+        フリーテキスト（相手名・メモ）
+        <input
+          value={filter.search}
+          onChange={(e) => set({ search: e.target.value })}
+          placeholder="部分一致"
+        />
+      </label>
+      <div className="filterFooter">
+        <span>
+          {filteredCount} / {totalCount} 件
+        </span>
+        <button
+          type="button"
+          className="smallButton clearFilters"
+          onClick={() => setFilter(emptyHistoryFilter)}
+        >
+          クリア
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1880,11 +2213,16 @@ function DeckEditorModal({
           </button>
         </div>
         <div className="editorPreview">
-          <SafeImage
-            src={draft.imageUrl}
-            fallbackSrc={`${IMAGE_BASE_URL}/${draft.imageId}.png`}
-            alt=""
-          />
+          <div className="editorPreviewImages">
+            <SafeImage
+              src={draft.imageUrl}
+              fallbackSrc={`${IMAGE_BASE_URL}/${draft.imageId}.png`}
+              alt=""
+            />
+            {cleanUrl(draft.imageUrl2) ? (
+              <SafeImage src={draft.imageUrl2} alt="" />
+            ) : null}
+          </div>
           <div>
             <strong>{draft.name}</strong>
             <p>型 {draft.variants.length}</p>
@@ -1915,6 +2253,17 @@ function DeckEditorModal({
             />
             <small className="fieldHint">
               URL入力中も上のプレビューに即時反映します。表示されない場合はURLの直リンク可否・拡張子・アクセス制限を確認してください。
+            </small>
+          </label>
+          <label>
+            画像URL 2枚目 任意
+            <input
+              value={draft.imageUrl2}
+              onChange={(e) => setDraft({ ...draft, imageUrl2: e.target.value })}
+              placeholder="https://..."
+            />
+            <small className="fieldHint">
+              2枚目を入れると相性表のサムネに縦並びで表示されます（未入力なら1枚のみ）。
             </small>
           </label>
           <label>

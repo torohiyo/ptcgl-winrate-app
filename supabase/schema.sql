@@ -3,10 +3,13 @@ create table if not exists public.ptcgl_decks (
   name text not null,
   image_id text not null default '',
   image_url text not null default '',
+  image_url_2 text not null default '',
   memo text not null default '',
   is_my_deck boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table public.ptcgl_decks add column if not exists image_url_2 text not null default '';
 
 create table if not exists public.ptcgl_deck_variants (
   id text primary key,
