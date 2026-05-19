@@ -329,7 +329,18 @@
 }
 
 /* v19.5 mobile: aggressively shrink board cards (PTCG Live-like compact size) */
-.replaySlot{min-width:0}
+/* v19.6 fix turn-progressive card growth: force min-content=0 so img intrinsic
+   (734x1024 from pokemontcg.io) does not push grid row height upward each turn */
+.replaySlot{min-width:0;min-height:0}
+.replaySlot.pokemon > img,
+.replaySlot.pokemon > .replayCardBlank{min-width:0;min-height:0;max-width:100%;max-height:100%}
+
+/* v19.7 fix horizontal shift: constrain board/hand width so the hand's
+   min-content (17+ cards × 34px) does not push the bench rightward off-screen */
+.replayLayout{grid-template-columns:minmax(0,1fr) 320px}
+.replayBoard{grid-template-columns:minmax(0,1fr)}
+.replayHandZone,.replayHand,.replayLogList,.replaySide{min-width:0;max-width:100%}
+@media(max-width:1100px){.replayLayout{grid-template-columns:none}}
 @media(max-width:480px){
   .replayBoard{padding:6px;gap:5px}
   .replaySide{padding:5px;gap:5px;border-radius:8px}
