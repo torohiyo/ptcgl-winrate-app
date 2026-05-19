@@ -100,22 +100,22 @@ function PokemonSlot({
   const counters = Math.floor(pokemon.damage / 10);
   return (
     <div className={`replaySlot pokemon ${size}`}>
+      {pokemon.attached.length > 0 && (
+        <div className="replayEnergyStack">
+          {pokemon.attached.map((energy, i) => (
+            <span
+              key={`${energy}-${i}`}
+              className={`replayEnergyCard ${energyColorClass(energy)}`}
+              title={energy}
+            >
+              {energyShortChar(energy)}
+            </span>
+          ))}
+        </div>
+      )}
       <CardImg name={pokemon.card} images={images} alt={pokemon.card} />
       <span className="replayPokemonName">{pokemon.card}</span>
       <div className="replayBadges">
-        {pokemon.attached.length > 0 && (
-          <div className="replayEnergies">
-            {pokemon.attached.map((energy, i) => (
-              <span
-                key={`${energy}-${i}`}
-                className={`replayEnergy ${energyColorClass(energy)}`}
-                title={energy}
-              >
-                {energyShortChar(energy)}
-              </span>
-            ))}
-          </div>
-        )}
         {counters > 0 && <span className="replayDmg">{counters * 10}</span>}
       </div>
       {pokemon.evolutionChain.length > 0 && (
@@ -139,59 +139,71 @@ function PlayerPanel({
   onShowDiscard: () => void;
 }) {
   const isSelf = side === "self";
+  const sideInfo = (
+    <div className="replaySideInfo">
+      <div className="replaySideName">
+        {player.name}
+        {isSelf ? <span className="replayYouTag">YOU</span> : null}
+      </div>
+      <div className="replayCounts">
+        <span className="replayCount prizes">
+          <b>{player.prizesRemaining}</b>/6 prize
+        </span>
+        <span className="replayCount deck">
+          <b>{player.deckCount}</b> deck
+        </span>
+        <span className="replayCount hand">
+          <b>{player.handCount}</b> hand
+        </span>
+        <span
+          className="replayCount discard clickable"
+          onClick={onShowDiscard}
+          title="クリックで中身表示"
+        >
+          <b>{player.discard.length}</b> trash 👁
+        </span>
+      </div>
+    </div>
+  );
+  const benchRow = (
+    <div className="replayBench">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <PokemonSlot
+          key={i}
+          pokemon={player.bench[i] || null}
+          images={images}
+          size="bench"
+        />
+      ))}
+    </div>
+  );
+  const activeRow = (
+    <div className="replayActiveRow">
+      <PokemonSlot pokemon={player.active} images={images} size="active" />
+    </div>
+  );
+  if (isSelf) {
+    return (
+      <div className={`replaySide ${side}`}>
+        {activeRow}
+        {benchRow}
+        {sideInfo}
+      </div>
+    );
+  }
   return (
     <div className={`replaySide ${side}`}>
-      <div className="replaySideInfo">
-        <div className="replaySideName">
-          {player.name}
-          {isSelf ? <span className="replayYouTag">YOU</span> : null}
-        </div>
-        <div className="replayCounts">
-          <span className="replayCount prizes">
-            <b>{player.prizesRemaining}</b>/6 prize
-          </span>
-          <span className="replayCount deck">
-            <b>{player.deckCount}</b> deck
-          </span>
-          <span className="replayCount hand">
-            <b>{player.handCount}</b> hand
-          </span>
-          <span
-            className="replayCount discard clickable"
-            onClick={onShowDiscard}
-            title="クリックで中身表示"
-          >
-            <b>{player.discard.length}</b> trash 👁
-          </span>
-        </div>
-      </div>
-      {!isSelf && (
-        <div className="replayOpponentHand">
-          {Array.from({ length: Math.min(player.handCount, 8) }).map((_, i) => (
-            <div key={i} className="replayCardBack" />
-          ))}
-          {player.handCount > 8 && (
-            <span className="replayHandOverflow">+{player.handCount - 8}</span>
-          )}
-        </div>
-      )}
-      <div className="replayBench">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <PokemonSlot
-            key={i}
-            pokemon={player.bench[i] || null}
-            images={images}
-            size="bench"
-          />
+      {sideInfo}
+      <div className="replayOpponentHand">
+        {Array.from({ length: Math.min(player.handCount, 8) }).map((_, i) => (
+          <div key={i} className="replayCardBack" />
         ))}
+        {player.handCount > 8 && (
+          <span className="replayHandOverflow">+{player.handCount - 8}</span>
+        )}
       </div>
-      <div className="replayActiveRow">
-        <PokemonSlot
-          pokemon={player.active}
-          images={images}
-          size="active"
-        />
-      </div>
+      {benchRow}
+      {activeRow}
     </div>
   );
 }

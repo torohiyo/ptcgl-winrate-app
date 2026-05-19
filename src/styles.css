@@ -292,3 +292,38 @@
   .replayTrashLabel{font-size:7px}
   .replayCloseBtn{font-size:10.5px;padding:5px 8px}
 }
+
+/* v19.3 energy-card visualization (tucked behind Pokemon, peeking from bottom) */
+.replaySlot.pokemon{overflow:visible}
+.replaySlot.pokemon > img,
+.replaySlot.pokemon > .replayCardBlank{position:relative;z-index:2;border-radius:7px}
+.replayPokemonName{z-index:3}
+.replayBadges{z-index:3}
+.replayEvoTag{z-index:3}
+.replayEnergyStack{position:absolute;left:50%;bottom:-9px;transform:translateX(-50%);display:flex;gap:0;z-index:1;pointer-events:none}
+.replayEnergyCard{width:13px;height:17px;margin-left:-3px;border-radius:3px;border:1.5px solid rgba(255,255,255,.85);box-shadow:0 2px 4px rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;padding-bottom:1px;font-size:8.5px;font-weight:950;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,.65);line-height:1}
+.replayEnergyCard:first-child{margin-left:0}
+.replayEnergyCard.psy{background:#a557c0}
+.replayEnergyCard.dark{background:#1f2330}
+.replayEnergyCard.fire{background:#ec5d3a}
+.replayEnergyCard.water{background:#5fa5e8}
+.replayEnergyCard.grass{background:#5dbf6b}
+.replayEnergyCard.fight{background:#c87a2a}
+.replayEnergyCard.elec{background:#f3c623;color:#3a2700;text-shadow:0 1px 1px rgba(255,255,255,.4)}
+.replayEnergyCard.metal{background:#a3acb9;color:#222;text-shadow:0 1px 1px rgba(255,255,255,.5)}
+.replayEnergyCard.fairy{background:#e893be}
+.replayEnergyCard.dragon{background:#7d6cd1}
+.replayEnergyCard.colorless{background:#d6cebc;color:#222;text-shadow:0 1px 1px rgba(255,255,255,.5)}
+.replaySlot.active .replayEnergyCard{width:17px;height:22px;font-size:11px;border-radius:3.5px;padding-bottom:2px}
+.replaySlot.active .replayEnergyStack{bottom:-12px;gap:0}
+
+/* v19.4 mobile: pin board, float playback bar to thumb zone */
+@media(max-width:480px){
+  .replayContainer{position:relative;grid-template-rows:auto auto 1fr;padding-bottom:96px}
+  .replayPlayback{position:absolute;left:8px;right:8px;bottom:8px;z-index:30;background:rgba(11,18,34,.97);backdrop-filter:blur(10px);box-shadow:0 -10px 28px rgba(0,0,0,.6);border-color:rgba(255,255,255,.18)}
+  /* layout already overflow-y:auto from v19.1 — fits inside grid 1fr above the floating bar */
+  .replayLayout{padding-bottom:4px}
+  /* slightly larger touch targets in the floating bar */
+  .replayPlayback > .replayCtrlBtn{height:38px}
+  .replayPlayback > .replayCtrlBtn.primary{height:42px}
+}
