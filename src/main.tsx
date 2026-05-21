@@ -1528,6 +1528,222 @@ function VariantSelect({
   );
 }
 
+function DailyWinRateChart({ matches }: { matches: MatchRecord[] }) {
+  const dailyStats = useMemo(() => {
+    const byDay = new Map<string, MatchRecord[]>();
+    for (const m of matches) {
+      if (m.result === "unknown") continue;
+      const date = m.playedAt.slice(0, 10);
+      if (!byDay.has(date)) byDay.set(date, []);
+      byDay.get(date)!.push(m);
+    }
+    return Array.from(byDay.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, ms]) => {
+        const wins = ms.filter((m) => m.result === "win").length;
+        return {
+          date,
+          total: ms.length,
+          wins,
+          losses: ms.length - wins,
+          winRate: (wins / ms.length) * 100,
+        };
+      });
+  }, [matches]);
+
+  if (dailyStats.length === 0) {
+    return (
+      <section className="card">
+        <div className="sectionTitle">
+          <h2>日別勝率</h2>
+        </div>
+        <p className="empty">まだ勝敗付きの試合履歴がありません。</p>
+      </section>
+    );
+  }
+
+  const width = 760;
+  const height = 200;
+  const padL = 36;
+  const padR = 12;
+  const padT = 14;
+  const padB = 28;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+  const n = dailyStats.length;
+  const xStep = n > 1 ? plotW / (n - 1) : 0;
+  const xAt = (i: number) => (n === 1 ? padL + plotW / 2 : padL + i * xStep);
+  const yAt = (rate: number) => padT + plotH * (1 - rate / 100);
+  const pathD = dailyStats
+    .map((d, i) => `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${yAt(d.winRate).toFixed(1)}`)
+    .join(" ");
+  const labelStride = Math.max(1, Math.ceil(n / 6));
+  const totalMatches = dailyStats.reduce((acc, d) => acc + d.total, 0);
+  const totalWins = dailyStats.reduce((acc, d) => acc + d.wins, 0);
+  const overallRate = (totalWins / totalMatches) * 100;
+
+  return (
+    <section className="card">
+      <div className="sectionTitle">
+        <h2>日別勝率</h2>
+        <span>
+          {n}日 / 合計 {totalMatches}試合 ・ 通算 {overallRate.toFixed(1)}%
+        </span>
+      </div>
+      <div className="dailyChartWrap">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="dailyChart"
+          preserveAspectRatio="none"
+        >
+          {[0, 25, 50, 75, 100].map((v) => (
+            <g key={v}>
+              <line
+                x1={padL}
+                y1={yAt(v)}
+                x2={width - padR}
+                y2={yAt(v)}
+                stroke={v === 50 ? "rgba(255,224,106,.32)" : "rgba(255,255,255,.08)"}
+                strokeDasharray={v === 50 ? "4 3" : undefined}
+              />
+              <text
+                x={padL - 5}
+                y={yAt(v) + 3}
+                textAnchor="end"
+                fontSize="9"
+                fill="#93a4ca"
+              >
+                {v}%
+              </text>
+            </g>
+          ))}
+          <path d={pathD} stroke="#ffe06a" strokeWidth="2" fill="none" />
+          {dailyStats.map((d, i) => (
+            <circle
+              key={d.date}
+              cx={xAt(i)}
+              cy={yAt(d.winRate)}
+              r={Math.min(6, 2.5 + Math.sqrt(d.total))}
+              fill={d.winRate >= 50 ? "#61f2a5" : "#ff7373"}
+              stroke="#0e1629"
+              strokeWidth="2"
+            >
+              <title>
+                {d.date}: {d.wins}勝{d.losses}敗 ({d.winRate.toFixed(1)}%)
+              </title>
+            </circle>
+          ))}
+          {dailyStats.map((d, i) => {
+            const show =
+              i === 0 || i === n - 1 || i % labelStride === 0;
+            if (!show) return null;
+            return (
+              <text
+                key={`x-${d.date}`}
+                x={xAt(i)}
+                y={height - padB + 14}
+                textAnchor="middle"
+                fontSize="9"
+                fill="#93a4ca"
+              >
+                {d.date.slice(5)}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+      <p className="chartHint">点の大きさ = 試合数 ・ 緑=勝率50%以上 / 赤=未満</p>
+    </section>
+  );
+}
+
+function OpponentsToStudy({
+  decks,
+  matches,
+  openDetail,
+}: {
+  decks: Deck[];
+  matches: MatchRecord[];
+  openDetail: (myId: string, oppId: string) => void;
+}) {
+  const bad = useMemo(() => {
+    const myDecks = decks.filter((d) => d.isMyDeck);
+    const rowDecks = myDecks.length ? myDecks : decks;
+    const items: {
+      myDeck: Deck;
+      oppDeck: Deck;
+      wins: number;
+      losses: number;
+      total: number;
+      winRate: number;
+    }[] = [];
+    for (const myDeck of rowDecks) {
+      for (const oppDeck of decks) {
+        const subset = matches.filter(
+          (m) =>
+            m.myDeckId === myDeck.id &&
+            m.opponentDeckId === oppDeck.id &&
+            m.result !== "unknown",
+        );
+        if (subset.length < 3) continue;
+        const wins = subset.filter((m) => m.result === "win").length;
+        const total = subset.length;
+        const winRate = (wins / total) * 100;
+        if (winRate >= 50) continue;
+        items.push({
+          myDeck,
+          oppDeck,
+          wins,
+          losses: total - wins,
+          total,
+          winRate,
+        });
+      }
+    }
+    return items.sort((a, b) => a.winRate - b.winRate || b.total - a.total);
+  }, [decks, matches]);
+
+  return (
+    <section className="card">
+      <div className="sectionTitle">
+        <h2>対策が必要な相手</h2>
+        <span>勝率50%未満 ・ 3試合以上</span>
+      </div>
+      {bad.length === 0 ? (
+        <p className="empty">該当する相手はいません 🎉</p>
+      ) : (
+        <ul className="studyList">
+          {bad.map((item) => (
+            <li key={`${item.myDeck.id}-${item.oppDeck.id}`}>
+              <button
+                type="button"
+                className={`studyItem ${cellClass(item.total, item.winRate)}`}
+                onClick={() => openDetail(item.myDeck.id, item.oppDeck.id)}
+              >
+                <div className="studyDecks">
+                  <DeckThumbStack deck={item.myDeck} variant="row" />
+                  <span className="studyVs">vs</span>
+                  <DeckThumbStack deck={item.oppDeck} variant="row" />
+                </div>
+                <div className="studyNames">
+                  <strong>{item.myDeck.name}</strong>
+                  <small>→ {item.oppDeck.name}</small>
+                </div>
+                <div className="studyStats">
+                  <span className="studyRate">{item.winRate.toFixed(1)}%</span>
+                  <span className="studyTally">
+                    {item.wins}勝{item.losses}敗 / {item.total}戦
+                  </span>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function MatrixPage({
   decks,
   matches,
@@ -1540,11 +1756,14 @@ function MatrixPage({
   const myDecks = decks.filter((deck) => deck.isMyDeck);
   const rowDecks = myDecks.length ? myDecks : decks;
   return (
-    <main className="card matrixCard">
-      <div className="sectionTitle">
-        <h2>デッキ相性表</h2>
-        <span>数字クリックで型別詳細へ</span>
-      </div>
+    <>
+      <DailyWinRateChart matches={matches} />
+      <OpponentsToStudy decks={decks} matches={matches} openDetail={openDetail} />
+      <main className="card matrixCard">
+        <div className="sectionTitle">
+          <h2>デッキ相性表</h2>
+          <span>数字クリックで型別詳細へ</span>
+        </div>
       <div className="matrixScroller">
         <table className="matchupMatrix">
           <thead>
@@ -1615,6 +1834,7 @@ function MatrixPage({
         </table>
       </div>
     </main>
+    </>
   );
 }
 

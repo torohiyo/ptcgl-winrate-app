@@ -335,6 +335,40 @@
 .replaySlot.pokemon > img,
 .replaySlot.pokemon > .replayCardBlank{min-width:0;min-height:0;max-width:100%;max-height:100%}
 
+/* v20 daily win rate chart + opponents-to-study list */
+.dailyChartWrap{width:100%;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:11px;padding:8px;overflow:hidden}
+.dailyChart{width:100%;height:auto;display:block}
+.chartHint{margin:6px 0 0;color:#93a4ca;font-size:10px;font-weight:700}
+.studyList{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.studyList li{margin:0}
+.studyItem{width:100%;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#edf2ff;border-radius:13px;padding:8px 10px;cursor:pointer;text-align:left}
+.studyItem:hover{background:rgba(255,255,255,.08)}
+.studyItem.rateLow{border-color:rgba(232,111,93,.5);background:linear-gradient(135deg,rgba(232,111,93,.2),rgba(232,111,93,.05))}
+.studyItem.rateBad{border-color:rgba(245,160,106,.45);background:linear-gradient(135deg,rgba(245,160,106,.16),rgba(245,160,106,.04))}
+.studyItem.rateEven{border-color:rgba(255,243,163,.35);background:linear-gradient(135deg,rgba(255,243,163,.12),rgba(255,243,163,.03))}
+.studyDecks{display:flex;align-items:center;gap:6px}
+.studyDecks .deckThumbStack{width:36px;height:30px;padding:1px}
+.studyDecks .deckThumbStack img{width:100%}
+.studyDecks .deckThumbStack.single img{height:28px}
+.studyDecks .deckThumbStack.double img{height:14px}
+.studyVs{font-size:9px;color:#93a4ca;font-weight:900}
+.studyNames{min-width:0;display:grid;gap:1px}
+.studyNames strong{font-size:12px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.studyNames small{font-size:10.5px;color:#a8b5d4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.studyStats{display:grid;gap:1px;text-align:right;align-content:center}
+.studyRate{font-size:15px;font-weight:950;color:#ff9a9a;line-height:1}
+.studyTally{font-size:9.5px;color:#93a4ca;font-weight:800}
+@media(max-width:430px){
+  .studyItem{grid-template-columns:auto 1fr auto;gap:7px;padding:7px 8px}
+  .studyDecks .deckThumbStack{width:30px;height:26px}
+  .studyDecks .deckThumbStack.single img{height:24px}
+  .studyDecks .deckThumbStack.double img{height:12px}
+  .studyNames strong{font-size:11px}
+  .studyNames small{font-size:9.5px}
+  .studyRate{font-size:13.5px}
+  .studyTally{font-size:9px}
+}
+
 /* v19.7 fix horizontal shift: constrain board/hand width so the hand's
    min-content (17+ cards × 34px) does not push the bench rightward off-screen */
 .replayLayout{grid-template-columns:minmax(0,1fr) 320px}
