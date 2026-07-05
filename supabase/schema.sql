@@ -42,9 +42,22 @@ alter table public.ptcgl_matches add column if not exists tournament_id text;
 alter table public.ptcgl_matches add column if not exists tournament_name text;
 create index if not exists ptcgl_matches_tournament_id_idx on public.ptcgl_matches (tournament_id);
 
+-- デッキコード（日本公式）管理テーブル
+create table if not exists public.ptcgl_deck_codes (
+  id text primary key,
+  code text not null,
+  name text not null default '',
+  created_at timestamptz not null default now()
+);
+
+-- 既存DB向け：試合に使用デッキコードの参照を追加
+alter table public.ptcgl_matches add column if not exists my_deck_code_id text;
+create index if not exists ptcgl_matches_my_deck_code_id_idx on public.ptcgl_matches (my_deck_code_id);
+
 alter table public.ptcgl_decks enable row level security;
 alter table public.ptcgl_deck_variants enable row level security;
 alter table public.ptcgl_matches enable row level security;
+alter table public.ptcgl_deck_codes enable row level security;
 
 create policy "ptcgl decks public read" on public.ptcgl_decks for select using (true);
 create policy "ptcgl decks public insert" on public.ptcgl_decks for insert with check (true);
@@ -61,6 +74,12 @@ create policy "ptcgl matches public insert" on public.ptcgl_matches for insert w
 create policy "ptcgl matches public update" on public.ptcgl_matches for update using (true) with check (true);
 create policy "ptcgl matches public delete" on public.ptcgl_matches for delete using (true);
 
+create policy "ptcgl deck_codes public read" on public.ptcgl_deck_codes for select using (true);
+create policy "ptcgl deck_codes public insert" on public.ptcgl_deck_codes for insert with check (true);
+create policy "ptcgl deck_codes public update" on public.ptcgl_deck_codes for update using (true) with check (true);
+create policy "ptcgl deck_codes public delete" on public.ptcgl_deck_codes for delete using (true);
+
 alter publication supabase_realtime add table public.ptcgl_decks;
 alter publication supabase_realtime add table public.ptcgl_deck_variants;
 alter publication supabase_realtime add table public.ptcgl_matches;
+alter publication supabase_realtime add table public.ptcgl_deck_codes;

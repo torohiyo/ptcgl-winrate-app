@@ -9,6 +9,7 @@ import {
   Download,
   Grid3X3,
   History,
+  Layers,
   Loader2,
   Mic,
   MicOff,
@@ -26,7 +27,20 @@ import "./styles.css";
 
 type MatchResult = "win" | "loss" | "unknown";
 type TurnOrder = "first" | "second" | "unknown";
-type Tab = "record" | "matrix" | "history" | "tournaments" | "decks" | "detail";
+type Tab =
+  | "record"
+  | "matrix"
+  | "history"
+  | "tournaments"
+  | "deckstats"
+  | "decks"
+  | "detail";
+
+type DeckCode = {
+  id: string;
+  code: string;
+  name: string;
+};
 
 type DeckVariant = {
   id: string;
@@ -61,6 +75,7 @@ type MatchRecord = {
   note: string;
   tournamentId?: string;
   tournamentName?: string;
+  myDeckCodeId?: string;
 };
 
 type MatchupSelection = {
@@ -137,6 +152,14 @@ type CloudMatchRow = {
   note: string | null;
   tournament_id: string | null;
   tournament_name: string | null;
+  my_deck_code_id: string | null;
+};
+
+type CloudDeckCodeRow = {
+  id: string;
+  code: string;
+  name: string;
+  created_at?: string | null;
 };
 
 const uid = () => {
@@ -162,6 +185,18 @@ const deckImageUrls = (deck: Deck): string[] => {
 };
 const variantImageUrl = (variant?: DeckVariant) =>
   cleanUrl(variant?.imageUrl || "");
+// 日本ポケカ公式のデッキコード（例: XXXXXX-XXXXXX-XXXXXX）
+const DECK_CODE_RE = /^[A-Za-z0-9]{6}-[A-Za-z0-9]{6}-[A-Za-z0-9]{6}$/;
+const normalizeDeckCode = (v: string) => (v || "").trim();
+const isValidDeckCode = (v: string) => DECK_CODE_RE.test(normalizeDeckCode(v));
+const deckCodeImageUrl = (code: string) =>
+  `https://www.pokemon-card.com/deck/deckView.php/deckID/${encodeURIComponent(
+    normalizeDeckCode(code),
+  )}.png`;
+const deckCodeDeckUrl = (code: string) =>
+  `https://www.pokemon-card.com/deck/confirm.html/deckID/${encodeURIComponent(
+    normalizeDeckCode(code),
+  )}/`;
 const resultLabel = (r: MatchResult) =>
   r === "win" ? "勝利" : r === "loss" ? "敗北" : "不明";
 const turnOrderLabel = (t: TurnOrder) =>
@@ -308,6 +343,7 @@ function migrateMatches(rawMatches: unknown): MatchRecord[] {
       note: String(matchLike?.note || ""),
       tournamentId: matchLike?.tournamentId ? String(matchLike.tournamentId) : "",
       tournamentName: matchLike?.tournamentName ? String(matchLike.tournamentName) : "",
+      myDeckCodeId: matchLike?.myDeckCodeId ? String(matchLike.myDeckCodeId) : "",
     }),
   );
 }
@@ -323,11 +359,23 @@ function migrateLastMyVariantByDeck(raw: unknown): Record<string, string> {
   return result;
 }
 
+function migrateDeckCodes(raw: unknown): DeckCode[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((c: any) => ({
+      id: String(c?.id || uid()),
+      code: String(c?.code || "").trim(),
+      name: String(c?.name || "").trim(),
+    }))
+    .filter((c) => c.code);
+}
+
 function loadState(): {
   decks: Deck[];
   matches: MatchRecord[];
   playerName: string;
   lastMyVariantByDeck: Record<string, string>;
+  deckCodes: DeckCode[];
 } {
   const keys = [STORAGE_KEY, ...OLD_STORAGE_KEYS];
   for (const key of keys) {
@@ -342,6 +390,7 @@ function loadState(): {
         lastMyVariantByDeck: migrateLastMyVariantByDeck(
           parsed.lastMyVariantByDeck,
         ),
+        deckCodes: migrateDeckCodes(parsed.deckCodes),
       };
     } catch {
       continue;
@@ -352,6 +401,7 @@ function loadState(): {
     matches: [],
     playerName: DEFAULT_PLAYER_NAME,
     lastMyVariantByDeck: {},
+    deckCodes: [],
   };
 }
 
@@ -393,7 +443,18 @@ function matchToCloudRow(match: MatchRecord) {
     note: match.note,
     tournament_id: match.tournamentId || null,
     tournament_name: match.tournamentName || null,
+    my_deck_code_id: match.myDeckCodeId || null,
   };
+}
+
+function deckCodeToCloudRow(dc: DeckCode) {
+  return { id: dc.id, code: dc.code, name: dc.name };
+}
+
+function rowsToDeckCodes(rows: CloudDeckCodeRow[]): DeckCode[] {
+  return (rows || [])
+    .map((r) => ({ id: r.id, code: (r.code || "").trim(), name: (r.name || "").trim() }))
+    .filter((c) => c.code);
 }
 
 function rowsToDecks(
@@ -441,6 +502,7 @@ function rowsToMatches(rows: CloudMatchRow[]): MatchRecord[] {
     note: row.note || "",
     tournamentId: row.tournament_id || "",
     tournamentName: row.tournament_name || "",
+    myDeckCodeId: row.my_deck_code_id || "",
   }));
 }
 
@@ -518,10 +580,34 @@ async function fetchCloudState() {
     query: "select=*&order=played_at.desc",
   });
 
+  let deckCodeRows: CloudDeckCodeRow[] = [];
+  try {
+    deckCodeRows = await supabaseRequest<CloudDeckCodeRow[]>("ptcgl_deck_codes", {
+      query: "select=*&order=created_at.asc",
+    });
+  } catch {
+    deckCodeRows = []; // テーブル未作成でも他は動くようにする
+  }
+
   return {
     decks: rowsToDecks(deckRows || [], variantRows || []),
     matches: rowsToMatches(matchRows || []),
+    deckCodes: rowsToDeckCodes(deckCodeRows || []),
   };
+}
+
+async function persistDeckCodeToCloud(dc: DeckCode) {
+  if (!isCloudEnabled) return;
+  await upsertRows("ptcgl_deck_codes", deckCodeToCloudRow(dc));
+}
+
+async function deleteDeckCodeFromCloud(id: string) {
+  if (!isCloudEnabled) return;
+  await supabaseRequest("ptcgl_deck_codes", {
+    method: "DELETE",
+    query: `id=eq.${encodeURIComponent(id)}`,
+    prefer: "return=minimal",
+  });
 }
 
 async function persistDeckToCloud(deck: Deck) {
@@ -709,6 +795,34 @@ function summarizeTournaments(matches: MatchRecord[]): TournamentSummary[] {
   return result.sort((a, b) => (a.endedAt < b.endedAt ? 1 : -1));
 }
 
+type DeckCodeSummary = DeckCode & {
+  wins: number;
+  losses: number;
+  total: number;
+  winRate: number;
+  matchCount: number;
+};
+
+function summarizeDeckCodes(
+  matches: MatchRecord[],
+  deckCodes: DeckCode[],
+): DeckCodeSummary[] {
+  return deckCodes
+    .map((dc) => {
+      const list = matches.filter((m) => m.myDeckCodeId === dc.id);
+      const s = summarize(list);
+      return {
+        ...dc,
+        wins: s.wins,
+        losses: s.losses,
+        total: s.total,
+        winRate: s.winRate,
+        matchCount: list.length,
+      };
+    })
+    .sort((a, b) => b.matchCount - a.matchCount);
+}
+
 function summarize(matches: MatchRecord[]) {
   const decided = matches.filter((m) => m.result !== "unknown");
   const wins = decided.filter((m) => m.result === "win").length;
@@ -793,6 +907,8 @@ function App() {
   const [tab, setTab] = useState<Tab>("record");
   const [decks, setDecks] = useState<Deck[]>(initial.decks);
   const [matches, setMatches] = useState<MatchRecord[]>(initial.matches);
+  const [deckCodes, setDeckCodes] = useState<DeckCode[]>(initial.deckCodes);
+  const [myDeckCodeId, setMyDeckCodeId] = useState<string>("");
   const [playerName, setPlayerName] = useState(initial.playerName);
   const [opponentName, setOpponentName] = useState("");
   const [myDeckId, setMyDeckId] = useState(
@@ -865,6 +981,7 @@ function App() {
       const cloudState = await fetchCloudState();
       setDecks(cloudState.decks);
       setMatches(cloudState.matches);
+      setDeckCodes(cloudState.deckCodes);
       const preferredDeck =
         cloudState.decks.find((deck) => deck.isMyDeck) || cloudState.decks[0];
       if (
@@ -902,9 +1019,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ decks, matches, playerName, lastMyVariantByDeck }),
+      JSON.stringify({ decks, matches, deckCodes, playerName, lastMyVariantByDeck }),
     );
-  }, [decks, matches, playerName, lastMyVariantByDeck]);
+  }, [decks, matches, deckCodes, playerName, lastMyVariantByDeck]);
 
   useEffect(() => {
     const currentDeck = getDeck(decks, myDeckId);
@@ -981,6 +1098,9 @@ function App() {
       myVariantId: finalMyVariantId,
       opponentDeckId,
       opponentVariantId: finalOpponentVariantId,
+      myDeckCodeId: deckCodes.some((dc) => dc.id === myDeckCodeId)
+        ? myDeckCodeId
+        : "",
       result,
       turnOrder,
       battleLog,
@@ -1109,6 +1229,48 @@ function App() {
       console.error(error);
       setSyncStatus("error");
       setSyncMessage("試合記録の削除に失敗しました。ローカルには反映されています。");
+    }
+  };
+
+  const addDeckCode = async (code: string, name: string) => {
+    const cleanCode = normalizeDeckCode(code);
+    const cleanName = normalize(name);
+    if (!isValidDeckCode(cleanCode)) {
+      setMessage("デッキコードの形式が正しくありません（例：xxxxxx-xxxxxx-xxxxxx）。");
+      return null;
+    }
+    if (!cleanName) {
+      setMessage("デッキ名を入力してください。");
+      return null;
+    }
+    if (deckCodes.some((dc) => normalizeDeckCode(dc.code) === cleanCode)) {
+      setMessage("このデッキコードは既に登録されています。");
+      return null;
+    }
+    const record: DeckCode = { id: uid(), code: cleanCode, name: cleanName };
+    setDeckCodes((prev) => [...prev, record]);
+    try {
+      await persistDeckCodeToCloud(record);
+      if (isCloudEnabled) setSyncMessage("デッキコードをSupabaseに保存しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("デッキコードのクラウド保存に失敗しました。ローカルには残っています。");
+    }
+    setMessage(`デッキ「${cleanName}」を登録しました。`);
+    return record.id;
+  };
+
+  const deleteDeckCode = async (id: string) => {
+    setDeckCodes((prev) => prev.filter((dc) => dc.id !== id));
+    if (myDeckCodeId === id) setMyDeckCodeId("");
+    try {
+      await deleteDeckCodeFromCloud(id);
+      if (isCloudEnabled) setSyncMessage("デッキコードをSupabaseから削除しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("デッキコードの削除に失敗しました。ローカルには反映されています。");
     }
   };
 
@@ -1355,6 +1517,13 @@ function App() {
           大会
         </button>
         <button
+          className={tab === "deckstats" ? "active" : ""}
+          onClick={() => setTab("deckstats")}
+        >
+          <Layers size={14} />
+          デッキ別成績
+        </button>
+        <button
           className={tab === "decks" ? "active" : ""}
           onClick={() => setTab("decks")}
         >
@@ -1379,6 +1548,10 @@ function App() {
           }}
           myVariantId={myVariantId}
           setMyVariantId={setMyVariantId}
+          deckCodes={deckCodes}
+          myDeckCodeId={myDeckCodeId}
+          setMyDeckCodeId={setMyDeckCodeId}
+          addDeckCode={addDeckCode}
           opponentDeckId={opponentDeckId}
           setOpponentDeckId={(id) => {
             setOpponentDeckId(id);
@@ -1446,6 +1619,14 @@ function App() {
         />
       )}
 
+      {tab === "deckstats" && (
+        <DeckCodeStatsPage
+          deckCodes={deckCodes}
+          matches={matches}
+          onGoToDecks={() => setTab("decks")}
+        />
+      )}
+
       {tab === "decks" && (
         <DecksPage
           decks={decks}
@@ -1455,6 +1636,9 @@ function App() {
           openEditor={openEditor}
           deleteDeck={deleteDeck}
           toggleMyDeck={toggleMyDeck}
+          deckCodes={deckCodes}
+          addDeckCode={addDeckCode}
+          deleteDeckCode={deleteDeckCode}
         />
       )}
 
@@ -1513,6 +1697,10 @@ function RecordPage(props: {
   setMyDeckId: (value: string) => void;
   myVariantId: string;
   setMyVariantId: (value: string) => void;
+  deckCodes: DeckCode[];
+  myDeckCodeId: string;
+  setMyDeckCodeId: (value: string) => void;
+  addDeckCode: (code: string, name: string) => Promise<string | null>;
   opponentDeckId: string;
   setOpponentDeckId: (value: string) => void;
   opponentVariantId: string;
@@ -1673,6 +1861,12 @@ function RecordPage(props: {
           value={props.myVariantId}
           onChange={props.setMyVariantId}
           label="自分の型"
+        />
+        <DeckCodeSelect
+          deckCodes={props.deckCodes}
+          value={props.myDeckCodeId}
+          onChange={props.setMyDeckCodeId}
+          addDeckCode={props.addDeckCode}
         />
       </section>
 
@@ -1907,6 +2101,172 @@ function VariantSelect({
         ))}
       </div>
     </div>
+  );
+}
+
+function DeckCodeSelect({
+  deckCodes,
+  value,
+  onChange,
+  addDeckCode,
+}: {
+  deckCodes: DeckCode[];
+  value: string;
+  onChange: (value: string) => void;
+  addDeckCode: (code: string, name: string) => Promise<string | null>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const selected = deckCodes.find((dc) => dc.id === value);
+
+  const submit = async () => {
+    setBusy(true);
+    const id = await addDeckCode(code, name);
+    setBusy(false);
+    if (id) {
+      onChange(id);
+      setCode("");
+      setName("");
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="variantBlock">
+      <p>使用デッキコード（任意）</p>
+      <select
+        className="deckCodeSelect"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">未選択</option>
+        {deckCodes.map((dc) => (
+          <option key={dc.id} value={dc.id}>
+            {dc.name}（{dc.code}）
+          </option>
+        ))}
+      </select>
+      {selected && (
+        <a
+          className="deckCodePreviewLink"
+          href={deckCodeDeckUrl(selected.code)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <SafeImage src={deckCodeImageUrl(selected.code)} alt={selected.name} />
+        </a>
+      )}
+      {open ? (
+        <div className="deckCodeAdd">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="デッキ名（例：リザードンex）"
+          />
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="xxxxxx-xxxxxx-xxxxxx"
+          />
+          <div className="miniActions">
+            <button type="button" className="primary" onClick={submit} disabled={busy}>
+              <Plus size={13} />
+              登録して選択
+            </button>
+            <button type="button" onClick={() => setOpen(false)}>
+              閉じる
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="smallButton"
+          onClick={() => setOpen(true)}
+        >
+          <Plus size={13} />
+          デッキコードを新規登録
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DeckCodeStatsPage({
+  deckCodes,
+  matches,
+  onGoToDecks,
+}: {
+  deckCodes: DeckCode[];
+  matches: MatchRecord[];
+  onGoToDecks: () => void;
+}) {
+  const summaries = useMemo(
+    () => summarizeDeckCodes(matches, deckCodes),
+    [matches, deckCodes],
+  );
+
+  if (!deckCodes.length) {
+    return (
+      <main className="pageGrid">
+        <section className="card fullWidth">
+          <div className="sectionTitle">
+            <h2>デッキ別成績</h2>
+          </div>
+          <p className="empty">
+            まだデッキコードが登録されていません。「デッキ」タブから、または記録時にデッキコードを登録できます。
+          </p>
+          <div className="miniActions">
+            <button type="button" className="primary" onClick={onGoToDecks}>
+              デッキ管理へ
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="pageGrid">
+      <section className="card fullWidth">
+        <div className="sectionTitle">
+          <h2>デッキ別成績</h2>
+          <span>デッキコードごとの勝率・戦績</span>
+        </div>
+        <div className="deckCodeStatsGrid">
+          {summaries.map((s) => (
+            <div key={s.id} className="deckCodeStatCard">
+              <a
+                className="deckCodePreviewLink"
+                href={deckCodeDeckUrl(s.code)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <SafeImage src={deckCodeImageUrl(s.code)} alt={s.name} />
+              </a>
+              <div className="deckCodeStatBody">
+                <b>{s.name}</b>
+                <code>{s.code}</code>
+                {s.total > 0 ? (
+                  <div className={`deckCodeStatRate ${cellClass(s.total, s.winRate)}`}>
+                    <strong>{s.winRate.toFixed(1)}%</strong>
+                    <span>
+                      {s.wins}勝{s.losses}敗 / {s.matchCount}試合
+                    </span>
+                  </div>
+                ) : (
+                  <div className="deckCodeStatRate rateNone">
+                    <span>記録なし</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -2888,6 +3248,9 @@ function DecksPage({
   openEditor,
   deleteDeck,
   toggleMyDeck,
+  deckCodes,
+  addDeckCode,
+  deleteDeckCode,
 }: {
   decks: Deck[];
   addDeck: () => void;
@@ -2896,7 +3259,24 @@ function DecksPage({
   openEditor: (deck: Deck) => void;
   deleteDeck: (id: string) => void;
   toggleMyDeck: (id: string) => void;
+  deckCodes: DeckCode[];
+  addDeckCode: (code: string, name: string) => Promise<string | null>;
+  deleteDeckCode: (id: string) => void;
 }) {
+  const [codeName, setCodeName] = useState("");
+  const [codeValue, setCodeValue] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
+
+  const submitDeckCode = async () => {
+    setCodeBusy(true);
+    const id = await addDeckCode(codeValue, codeName);
+    setCodeBusy(false);
+    if (id) {
+      setCodeName("");
+      setCodeValue("");
+    }
+  };
+
   return (
     <main className="pageGrid">
       <section className="card fullWidth">
@@ -2965,6 +3345,58 @@ function DecksPage({
             </div>
           </article>
         ))}
+      </section>
+
+      <section className="card fullWidth">
+        <div className="sectionTitle">
+          <h2>マイデッキコード</h2>
+          <span>日本公式のデッキコードを登録すると画像が表示されます</span>
+        </div>
+        <div className="deckCodeAddRow">
+          <input
+            value={codeName}
+            onChange={(e) => setCodeName(e.target.value)}
+            placeholder="デッキ名（例：リザードンex）"
+          />
+          <input
+            value={codeValue}
+            onChange={(e) => setCodeValue(e.target.value)}
+            placeholder="xxxxxx-xxxxxx-xxxxxx"
+          />
+          <button type="button" onClick={submitDeckCode} disabled={codeBusy}>
+            <Plus size={14} />
+            追加
+          </button>
+        </div>
+        {deckCodes.length === 0 ? (
+          <p className="empty">まだデッキコードが登録されていません。</p>
+        ) : (
+          <div className="deckCodeManageGrid">
+            {deckCodes.map((dc) => (
+              <article key={dc.id} className="deckCodeManageCard">
+                <a
+                  className="deckCodePreviewLink"
+                  href={deckCodeDeckUrl(dc.code)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <SafeImage src={deckCodeImageUrl(dc.code)} alt={dc.name} />
+                </a>
+                <div className="deckCodeManageBody">
+                  <strong>{dc.name}</strong>
+                  <code>{dc.code}</code>
+                </div>
+                <button
+                  type="button"
+                  aria-label="削除"
+                  onClick={() => deleteDeckCode(dc.id)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );
