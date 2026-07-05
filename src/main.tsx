@@ -15,13 +15,14 @@ import {
   Settings,
   Star,
   Trash2,
+  Trophy,
 } from "lucide-react";
 import ReplayModal from "./replay/ReplayModal";
 import "./styles.css";
 
 type MatchResult = "win" | "loss" | "unknown";
 type TurnOrder = "first" | "second" | "unknown";
-type Tab = "record" | "matrix" | "history" | "decks" | "detail";
+type Tab = "record" | "matrix" | "history" | "tournaments" | "decks" | "detail";
 
 type DeckVariant = {
   id: string;
@@ -54,6 +55,8 @@ type MatchRecord = {
   turnOrder: TurnOrder;
   battleLog: string;
   note: string;
+  tournamentId?: string;
+  tournamentName?: string;
 };
 
 type MatchupSelection = {
@@ -128,6 +131,8 @@ type CloudMatchRow = {
   turn_order: TurnOrder;
   battle_log: string | null;
   note: string | null;
+  tournament_id: string | null;
+  tournament_name: string | null;
 };
 
 const uid = () => {
@@ -297,6 +302,8 @@ function migrateMatches(rawMatches: unknown): MatchRecord[] {
         : "unknown",
       battleLog: String(matchLike?.battleLog || ""),
       note: String(matchLike?.note || ""),
+      tournamentId: matchLike?.tournamentId ? String(matchLike.tournamentId) : "",
+      tournamentName: matchLike?.tournamentName ? String(matchLike.tournamentName) : "",
     }),
   );
 }
@@ -380,6 +387,8 @@ function matchToCloudRow(match: MatchRecord) {
     turn_order: match.turnOrder,
     battle_log: match.battleLog,
     note: match.note,
+    tournament_id: match.tournamentId || null,
+    tournament_name: match.tournamentName || null,
   };
 }
 
@@ -426,6 +435,8 @@ function rowsToMatches(rows: CloudMatchRow[]): MatchRecord[] {
     turnOrder: row.turn_order,
     battleLog: row.battle_log || "",
     note: row.note || "",
+    tournamentId: row.tournament_id || "",
+    tournamentName: row.tournament_name || "",
   }));
 }
 
@@ -576,6 +587,35 @@ async function deleteMatchFromCloud(matchId: string) {
   });
 }
 
+async function clearAllMatchesFromCloud() {
+  if (!isCloudEnabled) return;
+  // PostgREST requires a filter for DELETE; "id=not.is.null" matches every row.
+  await supabaseRequest("ptcgl_matches", {
+    method: "DELETE",
+    query: "id=not.is.null",
+    prefer: "return=minimal",
+  });
+}
+
+async function deleteTournamentFromCloud(tournamentId: string) {
+  if (!isCloudEnabled) return;
+  await supabaseRequest("ptcgl_matches", {
+    method: "DELETE",
+    query: `tournament_id=eq.${encodeURIComponent(tournamentId)}`,
+    prefer: "return=minimal",
+  });
+}
+
+async function renameTournamentInCloud(tournamentId: string, name: string) {
+  if (!isCloudEnabled) return;
+  await supabaseRequest("ptcgl_matches", {
+    method: "PATCH",
+    query: `tournament_id=eq.${encodeURIComponent(tournamentId)}`,
+    body: { tournament_name: name },
+    prefer: "return=minimal",
+  });
+}
+
 function parseTurnOrderFromBattleLog(
   battleLog: string,
   playerName: string,
@@ -606,6 +646,63 @@ function parseResultFromBattleLog(
     line.trimEnd().endsWith(`${player} wins.`),
   );
   return won ? "win" : "loss";
+}
+
+function formatTournamentDate(iso: string) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+function nextTournamentName(matches: MatchRecord[]): string {
+  const base = `大会 ${formatTournamentDate(new Date().toISOString())}`;
+  const existing = new Set(
+    matches.map((m) => m.tournamentName || "").filter(Boolean),
+  );
+  if (!existing.has(base)) return base;
+  let i = 2;
+  while (existing.has(`${base} (${i})`)) i += 1;
+  return `${base} (${i})`;
+}
+
+type TournamentSummary = {
+  id: string;
+  name: string;
+  wins: number;
+  losses: number;
+  total: number;
+  winRate: number;
+  matchCount: number;
+  startedAt: string;
+  endedAt: string;
+};
+
+function summarizeTournaments(matches: MatchRecord[]): TournamentSummary[] {
+  const groups = new Map<string, MatchRecord[]>();
+  for (const m of matches) {
+    if (!m.tournamentId) continue;
+    const list = groups.get(m.tournamentId) || [];
+    list.push(m);
+    groups.set(m.tournamentId, list);
+  }
+  const result: TournamentSummary[] = [];
+  for (const [id, list] of groups) {
+    const s = summarize(list);
+    const times = list.map((m) => m.playedAt).sort();
+    result.push({
+      id,
+      name: list.find((m) => m.tournamentName)?.tournamentName || "大会",
+      wins: s.wins,
+      losses: s.losses,
+      total: s.total,
+      winRate: s.winRate,
+      matchCount: list.length,
+      startedAt: times[0] || "",
+      endedAt: times[times.length - 1] || "",
+    });
+  }
+  return result.sort((a, b) => (a.endedAt < b.endedAt ? 1 : -1));
 }
 
 function summarize(matches: MatchRecord[]) {
@@ -723,6 +820,26 @@ function App() {
     Record<string, string>
   >(initial.lastMyVariantByDeck);
 
+  // 大会（トーナメント）記録中の状態。初戦ボタンで開始し、最終戦ボタンで締める。
+  const [activeTournamentId, setActiveTournamentId] = useState<string>(
+    () => localStorage.getItem("ptcgl-active-tournament-id") || "",
+  );
+  const [activeTournamentName, setActiveTournamentName] = useState<string>(
+    () => localStorage.getItem("ptcgl-active-tournament-name") || "",
+  );
+  useEffect(() => {
+    localStorage.setItem("ptcgl-active-tournament-id", activeTournamentId);
+    localStorage.setItem("ptcgl-active-tournament-name", activeTournamentName);
+  }, [activeTournamentId, activeTournamentName]);
+
+  const activeTournamentCount = useMemo(
+    () =>
+      activeTournamentId
+        ? matches.filter((m) => m.tournamentId === activeTournamentId).length
+        : 0,
+    [matches, activeTournamentId],
+  );
+
   const myDeck = getDeck(decks, myDeckId);
   const opponentDeck = getDeck(decks, opponentDeckId);
   const myDeckOptions = decks.filter((deck) => deck.isMyDeck);
@@ -827,7 +944,18 @@ function App() {
     }
   };
 
-  const saveMatch = async () => {
+  const saveMatch = async (mode: "normal" | "start" | "final" = "normal") => {
+    // 大会の紐付けを決める
+    let recTournamentId = "";
+    let recTournamentName = "";
+    if (mode === "start") {
+      recTournamentId = uid();
+      recTournamentName = nextTournamentName(matches);
+    } else if (activeTournamentId) {
+      recTournamentId = activeTournamentId;
+      recTournamentName = activeTournamentName;
+    }
+
     const myCurrentDeck = getDeck(decks, myDeckId);
     const opponentCurrentDeck = getDeck(decks, opponentDeckId);
     const finalMyVariantId = myCurrentDeck.variants.length
@@ -853,8 +981,17 @@ function App() {
       turnOrder,
       battleLog,
       note,
+      tournamentId: recTournamentId,
+      tournamentName: recTournamentName,
     };
     setMatches((prev) => [record, ...prev]);
+    if (mode === "start") {
+      setActiveTournamentId(recTournamentId);
+      setActiveTournamentName(recTournamentName);
+    } else if (mode === "final") {
+      setActiveTournamentId("");
+      setActiveTournamentName("");
+    }
     if (finalMyVariantId) {
       setLastMyVariantByDeck((prev) => ({
         ...prev,
@@ -874,8 +1011,73 @@ function App() {
     setNote("");
     setResult("win");
     setTurnOrder("first");
-    setMessage("登録しました。");
-    setTab("matrix");
+    if (mode === "start") {
+      setMessage(`「${recTournamentName}」を開始しました（1戦目を登録）。`);
+      setTab("record");
+    } else if (mode === "final") {
+      setMessage(`「${recTournamentName}」を締めました（最終戦を登録）。`);
+      setTab("tournaments");
+    } else if (recTournamentId) {
+      setMessage(`登録しました（${recTournamentName}）。`);
+      setTab("record");
+    } else {
+      setMessage("登録しました。");
+      setTab("matrix");
+    }
+  };
+
+  const clearAllMatches = async () => {
+    setMatches([]);
+    setActiveTournamentId("");
+    setActiveTournamentName("");
+    setExpandedMatchId(null);
+    try {
+      await clearAllMatchesFromCloud();
+      if (isCloudEnabled) setSyncMessage("全対戦履歴をSupabaseから削除しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("全履歴の削除に失敗しました。ローカルには反映されています。");
+    }
+  };
+
+  const deleteTournament = async (tournamentId: string) => {
+    setMatches((prev) => prev.filter((m) => m.tournamentId !== tournamentId));
+    if (activeTournamentId === tournamentId) {
+      setActiveTournamentId("");
+      setActiveTournamentName("");
+    }
+    try {
+      await deleteTournamentFromCloud(tournamentId);
+      if (isCloudEnabled) setSyncMessage("大会の記録をSupabaseから削除しました。");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+      setSyncMessage("大会の削除に失敗しました。ローカルには反映されています。");
+    }
+  };
+
+  const renameTournament = async (tournamentId: string, name: string) => {
+    const trimmed = normalize(name);
+    if (!trimmed) return;
+    setMatches((prev) =>
+      prev.map((m) =>
+        m.tournamentId === tournamentId ? { ...m, tournamentName: trimmed } : m,
+      ),
+    );
+    if (activeTournamentId === tournamentId) setActiveTournamentName(trimmed);
+    try {
+      await renameTournamentInCloud(tournamentId, trimmed);
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error");
+    }
+  };
+
+  const cancelActiveTournament = () => {
+    setActiveTournamentId("");
+    setActiveTournamentName("");
+    setMessage("大会の記録を中断しました（登録済みの試合は残ります）。");
   };
 
   const editMatch = async (updated: MatchRecord) => {
@@ -1142,6 +1344,13 @@ function App() {
           履歴
         </button>
         <button
+          className={tab === "tournaments" ? "active" : ""}
+          onClick={() => setTab("tournaments")}
+        >
+          <Trophy size={14} />
+          大会
+        </button>
+        <button
           className={tab === "decks" ? "active" : ""}
           onClick={() => setTab("decks")}
         >
@@ -1185,6 +1394,10 @@ function App() {
           message={message}
           pasteLog={pasteLog}
           saveMatch={saveMatch}
+          activeTournamentId={activeTournamentId}
+          activeTournamentName={activeTournamentName}
+          activeTournamentCount={activeTournamentCount}
+          cancelActiveTournament={cancelActiveTournament}
         />
       )}
 
@@ -1216,6 +1429,16 @@ function App() {
           onEditMatch={setEditingMatch}
           onDeleteMatch={deleteMatch}
           onReplayMatch={setReplayingMatch}
+          onClearAll={clearAllMatches}
+        />
+      )}
+
+      {tab === "tournaments" && (
+        <TournamentsPage
+          matches={matches}
+          activeTournamentId={activeTournamentId}
+          onDeleteTournament={deleteTournament}
+          onRenameTournament={renameTournament}
         />
       )}
 
@@ -1301,8 +1524,13 @@ function RecordPage(props: {
   opponentDeck: Deck;
   message: string;
   pasteLog: () => void;
-  saveMatch: () => void;
+  saveMatch: (mode?: "normal" | "start" | "final") => void;
+  activeTournamentId: string;
+  activeTournamentName: string;
+  activeTournamentCount: number;
+  cancelActiveTournament: () => void;
 }) {
+  const inTournament = Boolean(props.activeTournamentId);
   return (
     <main className="pageGrid recordPage">
       <section className="card fullWidth">
@@ -1398,9 +1626,64 @@ function RecordPage(props: {
             placeholder="事故、プレミ、相手の型など"
           />
         </label>
-        <button className="primary" type="button" onClick={props.saveMatch}>
-          この試合を登録
-        </button>
+
+        {inTournament && (
+          <div className="tournamentBanner">
+            <span className="tournamentBannerLabel">
+              <Trophy size={15} />
+              大会記録中：<strong>{props.activeTournamentName}</strong>（
+              {props.activeTournamentCount}戦目まで登録済み）
+            </span>
+            <button
+              type="button"
+              className="smallButton"
+              onClick={props.cancelActiveTournament}
+            >
+              中断
+            </button>
+          </div>
+        )}
+
+        <div className="recordActions">
+          {!inTournament && (
+            <button
+              className="primary"
+              type="button"
+              onClick={() => props.saveMatch("normal")}
+            >
+              この試合を登録
+            </button>
+          )}
+          {inTournament && (
+            <button
+              className="primary"
+              type="button"
+              onClick={() => props.saveMatch("normal")}
+            >
+              大会{props.activeTournamentCount + 1}戦目として登録
+            </button>
+          )}
+          {!inTournament && (
+            <button
+              className="tournamentButton start"
+              type="button"
+              onClick={() => props.saveMatch("start")}
+            >
+              <Trophy size={14} />
+              大会初戦として登録
+            </button>
+          )}
+          {inTournament && (
+            <button
+              className="tournamentButton final"
+              type="button"
+              onClick={() => props.saveMatch("final")}
+            >
+              <Trophy size={14} />
+              大会最終戦として登録（締める）
+            </button>
+          )}
+        </div>
       </section>
 
       <MatchupNotes
@@ -2029,6 +2312,133 @@ function countActiveHistoryFilter(filter: HistoryFilter): number {
   return count;
 }
 
+function TournamentsPage({
+  matches,
+  activeTournamentId,
+  onDeleteTournament,
+  onRenameTournament,
+}: {
+  matches: MatchRecord[];
+  activeTournamentId: string;
+  onDeleteTournament: (id: string) => void;
+  onRenameTournament: (id: string, name: string) => void;
+}) {
+  const tournaments = useMemo(() => summarizeTournaments(matches), [matches]);
+  return (
+    <main className="card">
+      <div className="sectionTitle">
+        <h2>大会別成績</h2>
+        <span>
+          記録画面で「大会初戦」→「大会最終戦」で挟んだ区間が1大会になります
+        </span>
+      </div>
+      {tournaments.length === 0 ? (
+        <p className="empty">
+          まだ大会の記録はありません。記録画面の「大会初戦として登録」から始められます。
+        </p>
+      ) : (
+        <div className="tournamentList">
+          {tournaments.map((t) => (
+            <TournamentCard
+              key={t.id}
+              t={t}
+              active={t.id === activeTournamentId}
+              onDelete={onDeleteTournament}
+              onRename={onRenameTournament}
+            />
+          ))}
+        </div>
+      )}
+    </main>
+  );
+}
+
+function TournamentCard({
+  t,
+  active,
+  onDelete,
+  onRename,
+}: {
+  t: TournamentSummary;
+  active: boolean;
+  onDelete: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(t.name);
+  useEffect(() => setName(t.name), [t.name]);
+  const dateRange =
+    t.startedAt === t.endedAt || !t.endedAt
+      ? formatTournamentDate(t.startedAt)
+      : `${formatTournamentDate(t.startedAt)} 〜 ${formatTournamentDate(t.endedAt)}`;
+  return (
+    <div className={`tournamentCard ${active ? "active" : ""}`}>
+      <div className="tournamentCardHead">
+        {editing ? (
+          <input
+            className="tournamentNameInput"
+            value={name}
+            autoFocus
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => {
+              setEditing(false);
+              if (name.trim() && name.trim() !== t.name) onRename(t.id, name.trim());
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="tournamentName"
+            onClick={() => setEditing(true)}
+            title="クリックで名前を編集"
+          >
+            <Trophy size={15} />
+            {t.name}
+            {active && <span className="badge">記録中</span>}
+          </button>
+        )}
+        <button
+          type="button"
+          className="iconButton danger"
+          title="この大会の記録を削除"
+          onClick={() => {
+            if (
+              window.confirm(
+                `「${t.name}」の記録（${t.matchCount}試合）を削除します。よろしいですか？`,
+              )
+            )
+              onDelete(t.id);
+          }}
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+      <div className="tournamentStats">
+        <div className="tournamentStat">
+          <span className="statLabel">勝率</span>
+          <span className={`statValue ${cellClass(t.total, t.winRate)}`}>
+            {t.winRate}%
+          </span>
+        </div>
+        <div className="tournamentStat">
+          <span className="statLabel">戦績</span>
+          <span className="statValue">
+            {t.wins}勝 {t.losses}敗
+          </span>
+        </div>
+        <div className="tournamentStat">
+          <span className="statLabel">試合数</span>
+          <span className="statValue">{t.matchCount}</span>
+        </div>
+      </div>
+      <div className="tournamentDate">{dateRange}</div>
+    </div>
+  );
+}
+
 function HistoryPage({
   decks,
   matches,
@@ -2038,6 +2448,7 @@ function HistoryPage({
   onEditMatch,
   onDeleteMatch,
   onReplayMatch,
+  onClearAll,
 }: {
   decks: Deck[];
   matches: MatchRecord[];
@@ -2047,6 +2458,7 @@ function HistoryPage({
   onEditMatch: (match: MatchRecord) => void;
   onDeleteMatch: (matchId: string) => void;
   onReplayMatch: (match: MatchRecord) => void;
+  onClearAll: () => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState<HistoryFilter>(emptyHistoryFilter);
@@ -2076,6 +2488,22 @@ function HistoryPage({
           >
             <Download size={13} />
             CSV
+          </button>
+          <button
+            className="smallButton danger"
+            type="button"
+            disabled={matches.length === 0}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `対戦履歴を全て削除します（${matches.length}件）。この操作は取り消せません。よろしいですか？`,
+                )
+              )
+                onClearAll();
+            }}
+          >
+            <Trash2 size={13} />
+            全消去
           </button>
         </div>
       </div>

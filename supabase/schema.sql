@@ -32,8 +32,15 @@ create table if not exists public.ptcgl_matches (
   turn_order text not null check (turn_order in ('first', 'second', 'unknown')),
   battle_log text not null default '',
   note text not null default '',
+  tournament_id text,
+  tournament_name text,
   created_at timestamptz not null default now()
 );
+
+-- 既存DB向け：大会（トーナメント）カラムを追加
+alter table public.ptcgl_matches add column if not exists tournament_id text;
+alter table public.ptcgl_matches add column if not exists tournament_name text;
+create index if not exists ptcgl_matches_tournament_id_idx on public.ptcgl_matches (tournament_id);
 
 alter table public.ptcgl_decks enable row level security;
 alter table public.ptcgl_deck_variants enable row level security;
