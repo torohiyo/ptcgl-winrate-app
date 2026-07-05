@@ -9,9 +9,13 @@ import {
   Download,
   Grid3X3,
   History,
+  Loader2,
+  Mic,
+  MicOff,
   Pencil,
   PlayCircle,
   Plus,
+  Sparkles,
   Settings,
   Star,
   Trash2,
@@ -1531,6 +1535,76 @@ function RecordPage(props: {
   cancelActiveTournament: () => void;
 }) {
   const inTournament = Boolean(props.activeTournamentId);
+  const [recording, setRecording] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const [voiceMsg, setVoiceMsg] = useState("");
+  const recognitionRef = React.useRef<any>(null);
+
+  const toggleRecording = () => {
+    if (recording) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const SR =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setVoiceMsg("このブラウザは音声入力に非対応です（Chrome / Edge / Safari 推奨）。");
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "ja-JP";
+    rec.continuous = true;
+    rec.interimResults = true;
+    let base = props.note
+      ? props.note + (props.note.endsWith("\n") ? "" : "\n")
+      : "";
+    rec.onresult = (e: any) => {
+      let finalText = "";
+      for (let i = e.resultIndex; i < e.results.length; i += 1) {
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+      }
+      if (finalText) {
+        base += finalText;
+        props.setNote(base);
+      }
+    };
+    rec.onerror = (e: any) => {
+      setVoiceMsg(`音声認識エラー: ${e.error}`);
+      setRecording(false);
+    };
+    rec.onend = () => setRecording(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setRecording(true);
+    setVoiceMsg("録音中… 話し終えたら「停止」を押してください。");
+  };
+
+  const refineMemo = async () => {
+    const text = props.note.trim();
+    if (!text) {
+      setVoiceMsg("整形するメモがありません。");
+      return;
+    }
+    setRefining(true);
+    setVoiceMsg("AIで整形中…");
+    try {
+      const res = await fetch("/api/refine-memo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "整形に失敗しました。");
+      props.setNote(data.result);
+      setVoiceMsg("箇条書きに整形しました。");
+    } catch (err: any) {
+      setVoiceMsg(String(err?.message || err));
+    } finally {
+      setRefining(false);
+    }
+  };
+
   return (
     <main className="pageGrid recordPage">
       <section className="card fullWidth">
@@ -1619,13 +1693,38 @@ function RecordPage(props: {
 
       <section className="card fullWidth">
         <label>
-          メモ
-          <input
+          メモ（音声入力・AI整形対応）
+          <textarea
+            className="memoInput"
             value={props.note}
             onChange={(e) => props.setNote(e.target.value)}
-            placeholder="事故、プレミ、相手の型など"
+            placeholder="事故、プレミ、相手の型など。🎤で音声入力→✨で箇条書きに整形"
           />
         </label>
+        <div className="memoActions">
+          <button
+            type="button"
+            className={`smallButton ${recording ? "recording" : ""}`}
+            onClick={toggleRecording}
+          >
+            {recording ? <MicOff size={14} /> : <Mic size={14} />}
+            {recording ? "停止" : "音声入力"}
+          </button>
+          <button
+            type="button"
+            className="smallButton refine"
+            onClick={refineMemo}
+            disabled={refining || !props.note.trim()}
+          >
+            {refining ? (
+              <Loader2 size={14} className="spin" />
+            ) : (
+              <Sparkles size={14} />
+            )}
+            AIで箇条書き整形
+          </button>
+        </div>
+        {voiceMsg && <p className="message">{voiceMsg}</p>}
 
         {inTournament && (
           <div className="tournamentBanner">

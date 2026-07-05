@@ -464,3 +464,14 @@
 .tournamentDate{margin-top:9px;color:#93a4ca;font-size:11px;text-align:right}
 @media(max-width:900px){.tabs{grid-template-columns:repeat(5,1fr)}.recordActions{grid-template-columns:1fr}.tournamentList{grid-template-columns:1fr}}
 @media(max-width:430px){.tabs{grid-template-columns:repeat(3,1fr)}}
+
+/* ===== メモ 音声入力 / AI整形 ===== */
+.memoInput{min-height:96px}
+.memoActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.smallButton.recording{background:rgba(255,90,80,.18);border-color:rgba(255,120,110,.5);color:#ff9b8f;animation:pulse 1.2s ease-in-out infinite}
+.smallButton.refine{background:rgba(255,224,106,.14);border-color:rgba(255,224,106,.4);color:#ffe06a}
+.smallButton:disabled{opacity:.45;cursor:not-allowed}
+.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+@media(max-width:430px){.memoActions{grid-template-columns:1fr}}
