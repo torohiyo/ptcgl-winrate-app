@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  CalendarDays,
   Check,
   ClipboardPaste,
   Download,
@@ -31,6 +32,7 @@ type Tab =
   | "record"
   | "matrix"
   | "history"
+  | "daily"
   | "tournaments"
   | "deckstats"
   | "decks"
@@ -211,6 +213,12 @@ for (let r = RATING_MIN; r <= RATING_MAX; r += RATING_STEP) {
   RATING_OPTIONS.push(r);
 }
 const ratingLabel = (rating?: number) => (rating ? `${rating}帯` : "");
+const localDateKey = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+};
 const normalizeRating = (value: unknown): number | undefined => {
   const num = Number(value);
   if (!Number.isFinite(num)) return undefined;
@@ -976,6 +984,53 @@ function detectOpponentFromBattleLog(
   return { opponentName, opponentDeckId: best?.deckId };
 }
 
+type DailySummary = {
+  date: string;
+  matches: MatchRecord[];
+  wins: number;
+  losses: number;
+  total: number;
+  winRate: number;
+  rating?: number;
+  ratingDiff?: number;
+};
+
+function summarizeDaily(matches: MatchRecord[]): DailySummary[] {
+  const byDay = new Map<string, MatchRecord[]>();
+  for (const m of matches) {
+    const date = localDateKey(m.playedAt);
+    const list = byDay.get(date) || [];
+    list.push(m);
+    byDay.set(date, list);
+  }
+  const days = Array.from(byDay.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, list]) => {
+      const sorted = [...list].sort((a, b) =>
+        a.playedAt.localeCompare(b.playedAt),
+      );
+      const s = summarize(sorted);
+      const lastRated = [...sorted].reverse().find((m) => m.rating);
+      return {
+        date,
+        matches: sorted,
+        wins: s.wins,
+        losses: s.losses,
+        total: s.total,
+        winRate: s.winRate,
+        rating: lastRated?.rating,
+      } as DailySummary;
+    });
+  let prevRating: number | undefined;
+  for (const day of days) {
+    if (day.rating) {
+      if (prevRating) day.ratingDiff = day.rating - prevRating;
+      prevRating = day.rating;
+    }
+  }
+  return days;
+}
+
 function summarize(matches: MatchRecord[]) {
   const decided = matches.filter((m) => m.result !== "unknown");
   const wins = decided.filter((m) => m.result === "win").length;
@@ -1702,6 +1757,13 @@ function App() {
           履歴
         </button>
         <button
+          className={tab === "daily" ? "active" : ""}
+          onClick={() => setTab("daily")}
+        >
+          <CalendarDays size={14} />
+          日別
+        </button>
+        <button
           className={tab === "tournaments" ? "active" : ""}
           onClick={() => setTab("tournaments")}
         >
@@ -1801,6 +1863,18 @@ function App() {
           onDeleteMatch={deleteMatch}
           onReplayMatch={setReplayingMatch}
           onClearAll={clearAllMatches}
+        />
+      )}
+
+      {tab === "daily" && (
+        <DailyStatsPage
+          decks={decks}
+          matches={matches}
+          expandedMatchId={expandedMatchId}
+          setExpandedMatchId={setExpandedMatchId}
+          onEditMatch={setEditingMatch}
+          onDeleteMatch={deleteMatch}
+          onReplayMatch={setReplayingMatch}
         />
       )}
 
@@ -2488,7 +2562,7 @@ function DailyWinRateChart({ matches }: { matches: MatchRecord[] }) {
     const byDay = new Map<string, MatchRecord[]>();
     for (const m of matches) {
       if (m.result === "unknown") continue;
-      const date = m.playedAt.slice(0, 10);
+      const date = localDateKey(m.playedAt);
       if (!byDay.has(date)) byDay.set(date, []);
       byDay.get(date)!.push(m);
     }
@@ -2609,6 +2683,240 @@ function DailyWinRateChart({ matches }: { matches: MatchRecord[] }) {
       </div>
       <p className="chartHint">点の大きさ = 試合数 ・ 緑=勝率50%以上 / 赤=未満</p>
     </section>
+  );
+}
+
+function RatingTrendChart({ days }: { days: DailySummary[] }) {
+  const rated = days.filter((d) => d.rating);
+  if (rated.length === 0) {
+    return (
+      <section className="card">
+        <div className="sectionTitle">
+          <h2>レート帯推移</h2>
+        </div>
+        <p className="empty">
+          レート帯付きの試合がまだありません。記録画面の「レート帯」を選んで登録すると、日毎の推移がここに表示されます。
+        </p>
+      </section>
+    );
+  }
+
+  const width = 760;
+  const height = 200;
+  const padL = 44;
+  const padR = 12;
+  const padT = 14;
+  const padB = 28;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+  const ratings = rated.map((d) => d.rating!);
+  const minRating = Math.min(...ratings) - RATING_STEP;
+  const maxRating = Math.max(...ratings) + RATING_STEP;
+  const span = Math.max(maxRating - minRating, RATING_STEP);
+  const n = rated.length;
+  const xStep = n > 1 ? plotW / (n - 1) : 0;
+  const xAt = (i: number) => (n === 1 ? padL + plotW / 2 : padL + i * xStep);
+  const yAt = (r: number) => padT + plotH * (1 - (r - minRating) / span);
+  const pathD = rated
+    .map(
+      (d, i) =>
+        `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${yAt(d.rating!).toFixed(1)}`,
+    )
+    .join(" ");
+  const gridLines: number[] = [];
+  for (let r = minRating; r <= maxRating; r += RATING_STEP) gridLines.push(r);
+  const labelStride = Math.max(1, Math.ceil(n / 6));
+  const latest = rated[rated.length - 1];
+
+  return (
+    <section className="card">
+      <div className="sectionTitle">
+        <h2>レート帯推移</h2>
+        <span>
+          最新: {ratingLabel(latest.rating)}（{latest.date.slice(5)}）
+        </span>
+      </div>
+      <div className="dailyChartWrap">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="dailyChart"
+          preserveAspectRatio="none"
+        >
+          {gridLines.map((r) => (
+            <g key={r}>
+              <line
+                x1={padL}
+                y1={yAt(r)}
+                x2={width - padR}
+                y2={yAt(r)}
+                stroke="rgba(255,255,255,.08)"
+              />
+              <text
+                x={padL - 5}
+                y={yAt(r) + 3}
+                textAnchor="end"
+                fontSize="9"
+                fill="#93a4ca"
+              >
+                {r}
+              </text>
+            </g>
+          ))}
+          <path d={pathD} stroke="#6fb4ff" strokeWidth="2" fill="none" />
+          {rated.map((d, i) => (
+            <circle
+              key={d.date}
+              cx={xAt(i)}
+              cy={yAt(d.rating!)}
+              r={4}
+              fill={
+                d.ratingDiff === undefined
+                  ? "#6fb4ff"
+                  : d.ratingDiff >= 0
+                    ? "#61f2a5"
+                    : "#ff7373"
+              }
+              stroke="#0e1629"
+              strokeWidth="2"
+            >
+              <title>
+                {d.date}: {ratingLabel(d.rating)}
+                {d.ratingDiff !== undefined
+                  ? ` (${d.ratingDiff >= 0 ? "+" : ""}${d.ratingDiff})`
+                  : ""}
+              </title>
+            </circle>
+          ))}
+          {rated.map((d, i) => {
+            const show = i === 0 || i === n - 1 || i % labelStride === 0;
+            if (!show) return null;
+            return (
+              <text
+                key={`x-${d.date}`}
+                x={xAt(i)}
+                y={height - padB + 14}
+                textAnchor="middle"
+                fontSize="9"
+                fill="#93a4ca"
+              >
+                {d.date.slice(5)}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+      <p className="chartHint">
+        その日の最後に記録したレート帯 ・ 緑=前回から上昇 / 赤=下降
+      </p>
+    </section>
+  );
+}
+
+function DailyStatsPage({
+  decks,
+  matches,
+  expandedMatchId,
+  setExpandedMatchId,
+  onEditMatch,
+  onDeleteMatch,
+  onReplayMatch,
+}: {
+  decks: Deck[];
+  matches: MatchRecord[];
+  expandedMatchId: string | null;
+  setExpandedMatchId: (id: string | null) => void;
+  onEditMatch: (match: MatchRecord) => void;
+  onDeleteMatch: (matchId: string) => void;
+  onReplayMatch: (match: MatchRecord) => void;
+}) {
+  const days = useMemo(() => summarizeDaily(matches), [matches]);
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const newestFirst = useMemo(() => [...days].reverse(), [days]);
+
+  return (
+    <main className="pageGrid">
+      <div className="fullWidth">
+        <RatingTrendChart days={days} />
+      </div>
+      <div className="fullWidth">
+        <DailyWinRateChart matches={matches} />
+      </div>
+      <section className="card fullWidth">
+        <div className="sectionTitle">
+          <h2>日別成績</h2>
+          <span>日付をタップするとその日の試合を表示します</span>
+        </div>
+        {newestFirst.length === 0 ? (
+          <p className="empty">まだ試合履歴がありません。</p>
+        ) : (
+          <div className="dayList">
+            {newestFirst.map((day) => {
+              const isOpen = expandedDay === day.date;
+              const weekday = new Date(
+                `${day.date}T00:00:00`,
+              ).toLocaleDateString("ja-JP", { weekday: "short" });
+              return (
+                <div key={day.date} className="dayCard">
+                  <button
+                    type="button"
+                    className={`dayRow ${isOpen ? "open" : ""}`}
+                    onClick={() => setExpandedDay(isOpen ? null : day.date)}
+                  >
+                    <span className="dayDate">
+                      {day.date.slice(5).replace("-", "/")}
+                      <small>({weekday})</small>
+                    </span>
+                    <span
+                      className={`dayRate ${cellClass(day.total, day.winRate)}`}
+                    >
+                      {day.total ? `${day.winRate.toFixed(1)}%` : "—"}
+                    </span>
+                    <span className="dayTally">
+                      {day.wins}勝{day.losses}敗
+                      {day.matches.length !== day.total
+                        ? ` / ${day.matches.length}件`
+                        : ""}
+                    </span>
+                    <span className="dayRating">
+                      {day.rating ? (
+                        <>
+                          {ratingLabel(day.rating)}
+                          {day.ratingDiff !== undefined && (
+                            <b
+                              className={
+                                day.ratingDiff >= 0 ? "diffUp" : "diffDown"
+                              }
+                            >
+                              {day.ratingDiff >= 0 ? "+" : ""}
+                              {day.ratingDiff}
+                            </b>
+                          )}
+                        </>
+                      ) : (
+                        <small>レート未記録</small>
+                      )}
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="dayMatches">
+                      <HistoryList
+                        decks={decks}
+                        matches={[...day.matches].reverse()}
+                        expandedMatchId={expandedMatchId}
+                        setExpandedMatchId={setExpandedMatchId}
+                        onEditMatch={onEditMatch}
+                        onDeleteMatch={onDeleteMatch}
+                        onReplayMatch={onReplayMatch}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }
 

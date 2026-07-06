@@ -499,3 +499,21 @@
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
 @media(max-width:430px){.memoActions{grid-template-columns:1fr}}
+
+/* 日別タブ */
+.tabs{grid-template-columns:repeat(7,1fr)}
+.dayList{display:grid;gap:8px}
+.dayCard{border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.045);border-radius:14px;overflow:hidden}
+.dayRow{display:grid;grid-template-columns:92px 76px 1fr auto;align-items:center;gap:10px;width:100%;border:0;background:transparent;color:#edf2ff;padding:10px 12px;font:inherit;text-align:left;cursor:pointer}
+.dayRow.open{background:rgba(255,224,106,.07)}
+.dayDate{font-size:13px;font-weight:900}
+.dayDate small{color:#93a4ca;font-weight:700;margin-left:3px}
+.dayRate{justify-self:start;color:#111;font-size:12px;font-weight:950;border-radius:8px;padding:3px 8px}
+.dayRate.emptyCell{background:transparent;color:#93a4ca}
+.dayTally{color:#c8d4ef;font-size:11.5px}
+.dayRating{color:#9fc2ff;font-size:11.5px;font-weight:800;display:flex;align-items:center;gap:6px}
+.dayRating small{color:#5d6b8c;font-weight:700}
+.dayRating .diffUp{color:#61f2a5}
+.dayRating .diffDown{color:#ff7373}
+.dayMatches{padding:0 10px 10px}
+@media(max-width:640px){.tabs{grid-template-columns:repeat(4,1fr)}.dayRow{grid-template-columns:80px 66px 1fr;gap:7px;padding:9px 10px}.dayRating{grid-column:1/-1;justify-content:flex-end}}
