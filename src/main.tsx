@@ -71,6 +71,7 @@ type MatchRecord = {
   opponentVariantId?: string;
   result: MatchResult;
   turnOrder: TurnOrder;
+  rating?: number;
   battleLog: string;
   note: string;
   tournamentId?: string;
@@ -148,6 +149,7 @@ type CloudMatchRow = {
   opponent_variant_id: string | null;
   result: MatchResult;
   turn_order: TurnOrder;
+  rating: number | null;
   battle_log: string | null;
   note: string | null;
   tournament_id: string | null;
@@ -201,6 +203,21 @@ const resultLabel = (r: MatchResult) =>
   r === "win" ? "勝利" : r === "loss" ? "敗北" : "不明";
 const turnOrderLabel = (t: TurnOrder) =>
   t === "first" ? "先攻" : t === "second" ? "後攻" : "不明";
+const RATING_MIN = 1300;
+const RATING_MAX = 2200;
+const RATING_STEP = 100;
+const RATING_OPTIONS: number[] = [];
+for (let r = RATING_MIN; r <= RATING_MAX; r += RATING_STEP) {
+  RATING_OPTIONS.push(r);
+}
+const ratingLabel = (rating?: number) => (rating ? `${rating}帯` : "");
+const normalizeRating = (value: unknown): number | undefined => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return undefined;
+  const snapped = Math.round(num / RATING_STEP) * RATING_STEP;
+  if (snapped < RATING_MIN || snapped > RATING_MAX) return undefined;
+  return snapped;
+};
 const rateNumber = (wins: number, total: number) =>
   total ? Math.round((wins / total) * 1000) / 10 : 0;
 const rateText = (wins: number, total: number) =>
@@ -339,6 +356,7 @@ function migrateMatches(rawMatches: unknown): MatchRecord[] {
       turnOrder: ["first", "second", "unknown"].includes(matchLike?.turnOrder)
         ? matchLike.turnOrder
         : "unknown",
+      rating: normalizeRating(matchLike?.rating),
       battleLog: String(matchLike?.battleLog || ""),
       note: String(matchLike?.note || ""),
       tournamentId: matchLike?.tournamentId ? String(matchLike.tournamentId) : "",
@@ -376,6 +394,8 @@ function loadState(): {
   playerName: string;
   lastMyVariantByDeck: Record<string, string>;
   deckCodes: DeckCode[];
+  lastRating?: number;
+  lastMyDeckId?: string;
 } {
   const keys = [STORAGE_KEY, ...OLD_STORAGE_KEYS];
   for (const key of keys) {
@@ -391,6 +411,11 @@ function loadState(): {
           parsed.lastMyVariantByDeck,
         ),
         deckCodes: migrateDeckCodes(parsed.deckCodes),
+        lastRating: normalizeRating(parsed.lastRating),
+        lastMyDeckId:
+          typeof parsed.lastMyDeckId === "string" && parsed.lastMyDeckId
+            ? parsed.lastMyDeckId
+            : undefined,
       };
     } catch {
       continue;
@@ -439,6 +464,7 @@ function matchToCloudRow(match: MatchRecord) {
     opponent_variant_id: match.opponentVariantId || null,
     result: match.result,
     turn_order: match.turnOrder,
+    rating: match.rating ?? null,
     battle_log: match.battleLog,
     note: match.note,
     tournament_id: match.tournamentId || null,
@@ -498,6 +524,7 @@ function rowsToMatches(rows: CloudMatchRow[]): MatchRecord[] {
     opponentVariantId: row.opponent_variant_id || "",
     result: row.result,
     turnOrder: row.turn_order,
+    rating: normalizeRating(row.rating),
     battleLog: row.battle_log || "",
     note: row.note || "",
     tournamentId: row.tournament_id || "",
@@ -823,6 +850,132 @@ function summarizeDeckCodes(
     .sort((a, b) => b.matchCount - a.matchCount);
 }
 
+type BattleLogOpponentInfo = {
+  opponentName?: string;
+  opponentDeckId?: string;
+};
+
+const DECK_KEYWORD_STOP_WORDS = new Set(["box", "lead", "tera", "mega"]);
+
+function deckKeywords(deck: Deck): string[] {
+  const words = deck.name
+    .replace(/['’]s/gi, " ")
+    .split(/[^A-Za-z0-9]+/)
+    .map((w) => w.toLowerCase())
+    .filter((w) => w.length >= 4 && !DECK_KEYWORD_STOP_WORDS.has(w));
+  return Array.from(new Set(words));
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function detectOpponentFromBattleLog(
+  battleLog: string,
+  playerName: string,
+  decks: Deck[],
+): BattleLogOpponentInfo {
+  const lines = battleLog
+    .replace(/’/g, "'")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  // ログに登場するプレイヤー名を集め、自分以外を相手と判定する
+  const players: string[] = [];
+  const addPlayer = (name?: string) => {
+    const n = (name || "").trim();
+    if (n && !players.includes(n)) players.push(n);
+  };
+  for (const line of lines) {
+    let m = line.match(/^(.+?) drew 7 cards for the opening hand\.$/);
+    if (m) {
+      addPlayer(m[1]);
+      continue;
+    }
+    m = line.match(/^(.+?) decided to go (?:first|second)\.$/);
+    if (m) {
+      addPlayer(m[1]);
+      continue;
+    }
+    m = line.match(/^(.+?)'s Turn$/);
+    if (m) addPlayer(m[1]);
+  }
+  const self = normalize(playerName).toLowerCase();
+  const opponentName = players.find(
+    (p) => normalize(p).toLowerCase() !== self,
+  );
+  if (!opponentName) return {};
+
+  // 相手が場に出した・進化させた・攻撃に使ったポケモン名を集計する
+  const cardCounts = new Map<string, number>();
+  const bump = (name: string, weight = 1) => {
+    const key = name.trim().toLowerCase();
+    if (!key) return;
+    cardCounts.set(key, (cardCounts.get(key) || 0) + weight);
+  };
+  const esc = escapeRegExp(opponentName);
+  const playRe = new RegExp(
+    `^${esc} played (.+?) to the (?:Active Spot|Bench)\\.$`,
+  );
+  const evolveRe = new RegExp(
+    `^(?:- )?${esc} evolved (.+?) to (.+?) (?:in the Active Spot|on the Bench)\\.$`,
+  );
+  const attackRe = new RegExp(`^${esc}'s (.+?) used `);
+  const promoteRe = new RegExp(`^${esc}'s (.+?) is now in the Active Spot\\.$`);
+  for (const line of lines) {
+    let m = line.match(playRe);
+    if (m) {
+      bump(m[1]);
+      continue;
+    }
+    m = line.match(evolveRe);
+    if (m) {
+      bump(m[1]);
+      bump(m[2]);
+      continue;
+    }
+    m = line.match(attackRe);
+    if (m) {
+      bump(m[1], 2);
+      continue;
+    }
+    m = line.match(promoteRe);
+    if (m) bump(m[1]);
+  }
+  if (!cardCounts.size) return { opponentName };
+
+  // デッキ名のキーワードと照合し、最も一致度の高いデッキを選ぶ
+  const cards = Array.from(cardCounts.entries());
+  let best:
+    | { deckId: string; ratio: number; matched: number; hits: number }
+    | null = null;
+  for (const deck of decks) {
+    const keywords = deckKeywords(deck);
+    if (!keywords.length) continue;
+    let matched = 0;
+    let hits = 0;
+    for (const kw of keywords) {
+      const hit = cards.filter(([name]) => name.includes(kw));
+      if (hit.length) {
+        matched += 1;
+        hits += hit.reduce((sum, [, count]) => sum + count, 0);
+      }
+    }
+    if (!matched) continue;
+    const ratio = matched / keywords.length;
+    if (
+      !best ||
+      ratio > best.ratio ||
+      (ratio === best.ratio && matched > best.matched) ||
+      (ratio === best.ratio && matched === best.matched && hits > best.hits)
+    ) {
+      best = { deckId: deck.id, ratio, matched, hits };
+    }
+  }
+  return { opponentName, opponentDeckId: best?.deckId };
+}
+
 function summarize(matches: MatchRecord[]) {
   const decided = matches.filter((m) => m.result !== "unknown");
   const wins = decided.filter((m) => m.result === "win").length;
@@ -912,7 +1065,11 @@ function App() {
   const [playerName, setPlayerName] = useState(initial.playerName);
   const [opponentName, setOpponentName] = useState("");
   const [myDeckId, setMyDeckId] = useState(
-    initial.decks.find((d) => d.isMyDeck)?.id ||
+    (initial.lastMyDeckId &&
+    initial.decks.some((d) => d.id === initial.lastMyDeckId)
+      ? initial.lastMyDeckId
+      : "") ||
+      initial.decks.find((d) => d.isMyDeck)?.id ||
       initial.decks[0]?.id ||
       "dragapult",
   );
@@ -923,6 +1080,7 @@ function App() {
   const [opponentVariantId, setOpponentVariantId] = useState("");
   const [result, setResult] = useState<MatchResult>("win");
   const [turnOrder, setTurnOrder] = useState<TurnOrder>("first");
+  const [rating, setRating] = useState<number | undefined>(initial.lastRating);
   const [battleLog, setBattleLog] = useState("");
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
@@ -1019,9 +1177,25 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ decks, matches, deckCodes, playerName, lastMyVariantByDeck }),
+      JSON.stringify({
+        decks,
+        matches,
+        deckCodes,
+        playerName,
+        lastMyVariantByDeck,
+        lastRating: rating ?? null,
+        lastMyDeckId: myDeckId,
+      }),
     );
-  }, [decks, matches, deckCodes, playerName, lastMyVariantByDeck]);
+  }, [
+    decks,
+    matches,
+    deckCodes,
+    playerName,
+    lastMyVariantByDeck,
+    rating,
+    myDeckId,
+  ]);
 
   useEffect(() => {
     const currentDeck = getDeck(decks, myDeckId);
@@ -1054,11 +1228,26 @@ function App() {
       const text = await navigator.clipboard.readText();
       const parsedTurn = parseTurnOrderFromBattleLog(text, playerName);
       const parsedResult = parseResultFromBattleLog(text, playerName);
+      const detected = detectOpponentFromBattleLog(text, playerName, decks);
       setBattleLog(text);
       setTurnOrder(parsedTurn);
       setResult(parsedResult);
+      const extras: string[] = [];
+      if (detected.opponentName) {
+        setOpponentName(detected.opponentName);
+        extras.push(`相手: ${detected.opponentName}`);
+      }
+      if (detected.opponentDeckId) {
+        setOpponentDeckId(detected.opponentDeckId);
+        setOpponentVariantId("");
+        extras.push(
+          `相手デッキ: ${getDeck(decks, detected.opponentDeckId).name}`,
+        );
+      }
       setMessage(
-        `${turnOrderLabel(parsedTurn)} / ${resultLabel(parsedResult)} と判定しました。`,
+        `${turnOrderLabel(parsedTurn)} / ${resultLabel(parsedResult)} と判定しました。${
+          extras.length ? `${extras.join(" / ")} と推定しました。` : ""
+        }`,
       );
     } catch {
       setMessage("クリップボードの読み取りに失敗しました。");
@@ -1103,6 +1292,7 @@ function App() {
         : "",
       result,
       turnOrder,
+      rating,
       battleLog,
       note,
       tournamentId: recTournamentId,
@@ -1429,6 +1619,7 @@ function App() {
       "playedAt",
       "result",
       "turnOrder",
+      "rating",
       "playerName",
       "opponentName",
       "myDeck",
@@ -1446,6 +1637,7 @@ function App() {
         m.playedAt,
         m.result,
         m.turnOrder,
+        m.rating ?? "",
         m.playerName,
         m.opponentName,
         my.name,
@@ -1563,6 +1755,8 @@ function App() {
           setResult={setResult}
           turnOrder={turnOrder}
           setTurnOrder={setTurnOrder}
+          rating={rating}
+          setRating={setRating}
           battleLog={battleLog}
           note={note}
           setNote={setNote}
@@ -1709,6 +1903,8 @@ function RecordPage(props: {
   setResult: (value: MatchResult) => void;
   turnOrder: TurnOrder;
   setTurnOrder: (value: TurnOrder) => void;
+  rating?: number;
+  setRating: (value: number | undefined) => void;
   battleLog: string;
   note: string;
   setNote: (value: string) => void;
@@ -1837,6 +2033,22 @@ function RecordPage(props: {
               <option value="first">先攻</option>
               <option value="second">後攻</option>
               <option value="unknown">不明</option>
+            </select>
+          </label>
+          <label>
+            レート帯
+            <select
+              value={props.rating ?? ""}
+              onChange={(e) =>
+                props.setRating(normalizeRating(e.target.value))
+              }
+            >
+              <option value="">未設定</option>
+              {RATING_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {ratingLabel(r)}
+                </option>
+              ))}
             </select>
           </label>
         </div>
@@ -2026,6 +2238,7 @@ function MatchupNotes({
               <div className="historyLine">
                 <strong>{resultLabel(m.result)}</strong>
                 <span>{turnOrderLabel(m.turnOrder)}</span>
+                {m.rating ? <span>{ratingLabel(m.rating)}</span> : null}
                 <time>{new Date(m.playedAt).toLocaleString("ja-JP")}</time>
               </div>
               <p className="note">{m.note}</p>
@@ -3182,6 +3395,7 @@ function HistoryList({
               <div className="historyLine">
                 <strong>{resultLabel(match.result)}</strong>
                 <span>{turnOrderLabel(match.turnOrder)}</span>
+                {match.rating ? <span>{ratingLabel(match.rating)}</span> : null}
                 <time>{new Date(match.playedAt).toLocaleString("ja-JP")}</time>
                 <div
                   className="historyActions"
@@ -3590,14 +3804,30 @@ function MatchEditModal({
       const text = await navigator.clipboard.readText();
       const parsedTurn = parseTurnOrderFromBattleLog(text, playerName);
       const parsedResult = parseResultFromBattleLog(text, playerName);
+      const detected = detectOpponentFromBattleLog(text, playerName, decks);
       setDraft((prev) => ({
         ...prev,
         battleLog: text,
         turnOrder: parsedTurn,
         result: parsedResult,
+        ...(detected.opponentName
+          ? { opponentName: detected.opponentName }
+          : {}),
+        ...(detected.opponentDeckId
+          ? { opponentDeckId: detected.opponentDeckId, opponentVariantId: "" }
+          : {}),
       }));
+      const extras: string[] = [];
+      if (detected.opponentName) extras.push(`相手: ${detected.opponentName}`);
+      if (detected.opponentDeckId) {
+        extras.push(
+          `相手デッキ: ${getDeck(decks, detected.opponentDeckId).name}`,
+        );
+      }
       setPasteMessage(
-        `${turnOrderLabel(parsedTurn)} / ${resultLabel(parsedResult)} と判定しました。`,
+        `${turnOrderLabel(parsedTurn)} / ${resultLabel(parsedResult)} と判定しました。${
+          extras.length ? `${extras.join(" / ")} と推定しました。` : ""
+        }`,
       );
     } catch {
       setPasteMessage("クリップボードの読み取りに失敗しました。");
@@ -3663,6 +3893,22 @@ function MatchEditModal({
               <option value="first">先攻</option>
               <option value="second">後攻</option>
               <option value="unknown">不明</option>
+            </select>
+          </label>
+          <label>
+            レート帯
+            <select
+              value={draft.rating ?? ""}
+              onChange={(e) =>
+                setDraft({ ...draft, rating: normalizeRating(e.target.value) })
+              }
+            >
+              <option value="">未設定</option>
+              {RATING_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {ratingLabel(r)}
+                </option>
+              ))}
             </select>
           </label>
         </div>
